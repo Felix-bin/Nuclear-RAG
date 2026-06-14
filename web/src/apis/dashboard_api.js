@@ -48,15 +48,13 @@ export const dashboardApi = {
    * 获取用户反馈列表
    * @param {Object} params - 查询参数
    * @param {string} params.rating - 反馈类型过滤 (like/dislike/all)
-   * @param {number} params.limit - 每页数量
-   * @param {number} params.offset - 偏移量
+   * @param {string} params.agent_id - 智能体ID过滤
    * @returns {Promise<Array>} - 反馈列表
    */
   getFeedbacks: (params = {}) => {
     const queryParams = new URLSearchParams()
     if (params.rating && params.rating !== 'all') queryParams.append('rating', params.rating)
-    if (params.limit) queryParams.append('limit', params.limit)
-    if (params.offset) queryParams.append('offset', params.offset)
+    if (params.agent_id) queryParams.append('agent_id', params.agent_id)
 
     return apiAdminGet(`/api/dashboard/feedbacks?${queryParams.toString()}`)
   },
@@ -125,12 +123,10 @@ export const dashboardApi = {
   /**
    * 获取调用统计时间序列数据
    * @param {string} type - 数据类型 (models/agents/tokens/tools)
-   * @param {string} timeRange - 时间范围 (7hours/7days/7weeks)
+   * @param {string} timeRange - 时间范围 (14hours/14days/14weeks)
    * @returns {Promise<Object>} - 时间序列统计数据
    */
-  getCallTimeseries: (type = 'models', timeRange = '7days') => {
+  getCallTimeseries: (type = 'models', timeRange = '14days') => {
     return apiAdminGet(`/api/dashboard/stats/calls/timeseries?type=${type}&time_range=${timeRange}`)
   }
 }
-
-

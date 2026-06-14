@@ -8,7 +8,7 @@
 </template>
 
 <script setup>
-import { defineProps } from 'vue';
+import { defineProps } from 'vue'
 
 const props = defineProps({
   visible: {
@@ -19,7 +19,7 @@ const props = defineProps({
     type: String,
     default: '加载中...'
   }
-});
+})
 </script>
 
 <style scoped>
@@ -45,7 +45,7 @@ const props = defineProps({
 .loading-spinner {
   width: 50px;
   height: 50px;
-  border: 5px solid #f3f3f3;
+  border: 5px solid var(--gray-300);
   border-top: 5px solid var(--main-color);
   border-radius: 50%;
   animation: spin 1s linear infinite;
@@ -58,7 +58,11 @@ const props = defineProps({
 }
 
 @keyframes spin {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
 }
-</style> 
+</style>

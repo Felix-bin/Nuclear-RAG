@@ -4,15 +4,17 @@
       <h4>文件内容</h4>
       <div class="header-controls">
         <div class="header-info">
-          <span>共 {{ mappedChunks.length }} 个片段</span>
+          <span v-if="mappedChunks.length > 0">共 {{ mappedChunks.length }} 个片段</span>
           <span>总长度 {{ formatTextLength(mergedContent.length) }}</span>
         </div>
         <button
           class="toggle-btn"
+          v-if="mappedChunks.length > 0"
           @click="toggleChunkPanel"
           :title="chunkPanelVisible ? '隐藏片段列表' : '显示片段列表'"
         >
-          {{ chunkPanelVisible ? '«' : '»' }}
+          <ChevronLeft v-if="chunkPanelVisible" :size="14" />
+          <ChevronRight v-else :size="14" />
         </button>
       </div>
     </div>
@@ -23,28 +25,23 @@
         <MdPreview
           :modelValue="mergedContent"
           :theme="theme"
-          :previewTheme="previewTheme"
-          :codeTheme="codeTheme"
+          previewTheme="github"
           class="markdown-content"
         />
       </div>
 
       <!-- 右侧：Chunk信息 -->
-      <div
-        class="chunk-panel"
-        v-show="chunkPanelVisible"
-      >
+      <div class="chunk-panel" v-show="chunkPanelVisible">
         <div class="chunk-list">
           <div
             v-for="(chunk, index) in mappedChunks"
             :key="chunk.id"
             class="chunk-item"
             :class="{
-              'active': activeChunkIndex === index,
-              'highlighted': highlightedChunkIndex === index
+              active: activeChunkIndex === index,
+              highlighted: highlightedChunkIndex === index
             }"
             @click="handleChunkClick(index)"
-            @dblclick="handleChunkDblClick(chunk)"
             @mouseenter="highlightChunk(index)"
             @mouseleave="unhighlightChunk()"
           >
@@ -63,11 +60,7 @@
     </div>
 
     <!-- 悬浮提示 -->
-    <div
-      v-if="showTooltip && currentChunk"
-      class="chunk-tooltip"
-      :style="tooltipStyle"
-    >
+    <div v-if="showTooltip && currentChunk" class="chunk-tooltip" :style="tooltipStyle">
       <div class="tooltip-header">
         <strong>片段信息</strong>
       </div>
@@ -90,134 +83,99 @@
         </div>
       </div>
     </div>
-
-    <!-- 编辑chunk模态框 -->
-    <ChunkEditModal
-      v-model="editModalVisible"
-      :chunk="selectedChunk"
-      :dbId="dbId"
-      :fileId="fileId"
-      @saved="handleChunkSaved"
-    />
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue';
-import { MdPreview } from 'md-editor-v3';
-import 'md-editor-v3/lib/preview.css';
-import { mergeChunks, getChunkPreview } from '@/utils/chunkUtils';
-import ChunkEditModal from './ChunkEditModal.vue';
-import { useDatabaseStore } from '@/stores/database';
-import { documentApi } from '@/apis/knowledge_api';
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { MdPreview } from 'md-editor-v3'
+import 'md-editor-v3/lib/preview.css'
+import { mergeChunks, getChunkPreview } from '@/utils/chunkUtils'
+import { useThemeStore } from '@/stores/theme'
+import { ChevronRight, ChevronLeft } from 'lucide-vue-next'
 
 const props = defineProps({
   chunks: {
     type: Array,
     default: () => []
+  },
+  content: {
+    type: String,
+    default: ''
   }
-});
+})
 
-const store = useDatabaseStore();
+// 使用主题store
+const themeStore = useThemeStore()
 
 // 响应式引用
-const showTooltip = ref(false);
-const currentChunk = ref(null);
-const tooltipStyle = ref({ top: '0px', left: '0px' });
-const activeChunkIndex = ref(null);
-const highlightedChunkIndex = ref(null);
-const chunkPanelVisible = ref(true);
-const editModalVisible = ref(false);
-const selectedChunk = ref(null);
+const showTooltip = ref(false)
+const currentChunk = ref(null)
+const tooltipStyle = ref({ top: '0px', left: '0px' })
+const activeChunkIndex = ref(null)
+const highlightedChunkIndex = ref(null)
+const chunkPanelVisible = ref(false)
 
-// 获取数据库ID和文件ID
-const dbId = computed(() => store.databaseId);
-const fileId = computed(() => store.selectedFile?.file_id || '');
-
-// 主题设置
-const theme = ref('light');
-const previewTheme = ref('github');
-const codeTheme = ref('atom');
+// 主题设置 - 根据系统主题动态切换
+const theme = computed(() => (themeStore.isDark ? 'dark' : 'light'))
 
 // 合并chunks
-const mergeResult = computed(() => mergeChunks(props.chunks));
-const mergedContent = computed(() => mergeResult.value.content);
-const mappedChunks = computed(() => mergeResult.value.chunks);
+const mergeResult = computed(() => mergeChunks(props.chunks))
+const mergedContent = computed(() => props.content || mergeResult.value.content)
+const mappedChunks = computed(() => mergeResult.value.chunks)
 
 // 格式化文本长度
 function formatTextLength(length) {
-  if (!length && length !== 0) return '0 字符';
+  if (!length && length !== 0) return '0 字符'
 
   if (length < 1000) {
-    return `${length} 字符`;
+    return `${length} 字符`
   } else {
-    return `${(length / 1000).toFixed(1)}k 字符`;
+    return `${(length / 1000).toFixed(1)}k 字符`
   }
 }
 
 // 高亮chunk
 function highlightChunk(index) {
-  if (!mappedChunks.value?.[index]) return;
-  highlightedChunkIndex.value = index;
-  currentChunk.value = mappedChunks.value[index];
+  if (!mappedChunks.value?.[index]) return
+  highlightedChunkIndex.value = index
+  currentChunk.value = mappedChunks.value[index]
 }
 
 function unhighlightChunk() {
-  highlightedChunkIndex.value = null;
-  currentChunk.value = null;
+  highlightedChunkIndex.value = null
+  currentChunk.value = null
 }
 
 // 处理chunk点击
 function handleChunkClick(index) {
-  if (!mappedChunks.value?.[index]) return;
-  activeChunkIndex.value = index;
-}
-
-// 处理chunk双击
-function handleChunkDblClick(chunk) {
-  if (!chunk) return;
-  selectedChunk.value = chunk;
-  editModalVisible.value = true;
-}
-
-// 处理chunk保存后的回调
-async function handleChunkSaved() {
-  // 重新加载文件详情
-  if (store.selectedFile && dbId.value) {
-    try {
-      const data = await documentApi.getDocumentInfo(dbId.value, fileId.value);
-      if (data && data.lines) {
-        store.selectedFile = { ...store.selectedFile, lines: data.lines || [] };
-      }
-    } catch (error) {
-      console.error('重新加载文件详情失败:', error);
-    }
-  }
+  if (!mappedChunks.value?.[index]) return
+  activeChunkIndex.value = index
 }
 
 // 切换chunk面板显示
 function toggleChunkPanel() {
-  chunkPanelVisible.value = !chunkPanelVisible.value;
+  chunkPanelVisible.value = !chunkPanelVisible.value
 }
 
 // 处理鼠标移动显示tooltip
 function handleMouseMove(event) {
-  if (!currentChunk.value) return;
+  if (!currentChunk.value) return
 
   tooltipStyle.value = {
     top: event.clientY + 10 + 'px',
     left: event.clientX + 10 + 'px'
-  };
+  }
 }
 
 // 生命周期
 onMounted(() => {
-  document.addEventListener('mousemove', handleMouseMove);
-});
+  document.addEventListener('mousemove', handleMouseMove)
+})
 
 onUnmounted(() => {
-  document.removeEventListener('mousemove', handleMouseMove);
-});
+  document.removeEventListener('mousemove', handleMouseMove)
+})
 </script>
 
 <style scoped>
@@ -225,7 +183,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   height: 100%;
-  border: 1px solid #e8e8e8;
+  border: 1px solid var(--gray-200);
   border-radius: 6px;
   overflow: hidden;
 }
@@ -235,8 +193,8 @@ onUnmounted(() => {
   justify-content: space-between;
   align-items: center;
   padding: 4px 16px;
-  background: #fafafa;
-  border-bottom: 1px solid #e8e8e8;
+  background: var(--gray-25);
+  border-bottom: 1px solid var(--gray-200);
 }
 
 .header-controls {
@@ -246,16 +204,18 @@ onUnmounted(() => {
 }
 
 .toggle-btn {
-  /* background: var(--main-color); */
-  /* color: white; */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--gray-100);
   border: none;
   border-radius: 4px;
-  width: 28px;
+  width: 24px;
   height: 24px;
+  padding: 0;
   cursor: pointer;
-  font-size: 14px;
-  font-weight: bold;
   transition: all 0.2s ease;
+  color: var(--gray-700);
 }
 
 .toggle-btn:hover {
@@ -272,7 +232,7 @@ onUnmounted(() => {
   display: flex;
   gap: 16px;
   font-size: 12px;
-  color: #666;
+  color: var(--gray-500);
 }
 
 .viewer-container {
@@ -285,8 +245,8 @@ onUnmounted(() => {
   flex: 1;
   overflow-y: auto;
   padding: 16px;
-  background: white;
-  border-right: 1px solid #e8e8e8;
+  background: var(--gray-0);
+  border-right: 1px solid var(--gray-200);
   min-height: 0; /* 关键：确保flex项目可以缩小 */
 }
 
@@ -318,7 +278,7 @@ onUnmounted(() => {
 .chunk-panel {
   width: 300px;
   overflow-y: auto;
-  background: #fafafa;
+  background: var(--gray-25);
   padding: 16px;
   min-height: 0; /* 确保flex项目可以缩小 */
 }
@@ -330,13 +290,13 @@ onUnmounted(() => {
 }
 
 .chunk-item {
-  background: white;
-  border: 1px solid #e8e8e8;
+  background: var(--gray-0);
+  border: 1px solid var(--gray-200);
   border-radius: 6px;
   padding: 12px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  user-select: none;
+  /* cursor: pointer; */
+  /* transition: all 0.2s ease; */
+  /* user-select: none; */
 }
 
 .chunk-item:hover {
@@ -351,7 +311,7 @@ onUnmounted(() => {
 } */
 /*
 .chunk-item.highlighted {
-  border-color: var(--color-success);
+  border-color: var(--color-success-500);
   background: var(--main-50);
 } */
 
@@ -401,7 +361,7 @@ onUnmounted(() => {
 
 .chunk-tooltip {
   position: fixed;
-  background: white;
+  background: var(--gray-0);
   border: 1px solid var(--gray-300);
   border-radius: 6px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);

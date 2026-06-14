@@ -21,9 +21,13 @@
           <User class="icon" />
           <span class="user-greeting">{{ greeting }}</span>
         </div>
-        <div class="status-indicator" :class="systemStatus">
-          <div class="status-dot"></div>
-          <span class="status-text">{{ statusText }}</span>
+        <div class="task-center-entry" @click="openTaskCenter">
+          <a-badge :count="activeTaskCount" :overflow-count="99" class="task-center-badge">
+            <span class="task-center-button">
+              <ClipboardList class="icon" />
+              <span class="task-center-label">任务中心</span>
+            </span>
+          </a-badge>
         </div>
       </div>
     </div>
@@ -34,15 +38,19 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useInfoStore } from '@/stores/info'
 import { useUserStore } from '@/stores/user'
-import { Clock, User } from 'lucide-vue-next'
+import { Clock, User, ClipboardList } from 'lucide-vue-next'
+import { useTaskerStore } from '@/stores/tasker'
+import { storeToRefs } from 'pinia'
+import dayjs from '@/utils/time'
 
 // 使用 stores
 const infoStore = useInfoStore()
 const userStore = useUserStore()
+const taskerStore = useTaskerStore()
+const { activeCount: activeCountRef } = storeToRefs(taskerStore)
 
 // 响应式数据
 const currentTime = ref('')
-const systemStatus = ref('online')
 
 // 计算属性
 const organization = computed(() => infoStore.organization)
@@ -55,7 +63,7 @@ const currentUser = computed(() => {
 
 // 问候语计算属性
 const greeting = computed(() => {
-  const hour = new Date().getHours()
+  const hour = dayjs().tz('Asia/Shanghai').hour()
   let greetingText = ''
 
   if (hour >= 5 && hour < 12) {
@@ -73,30 +81,16 @@ const greeting = computed(() => {
   return `${greetingText}！${currentUser.value}`
 })
 
-const statusText = computed(() => {
-  switch (systemStatus.value) {
-    case 'online':
-      return '在线'
-    case 'offline':
-      return '离线'
-    case 'maintenance':
-      return '维护中'
-    default:
-      return '未知'
-  }
-})
+const activeTaskCount = computed(() => activeCountRef.value || 0)
+
+const openTaskCenter = () => {
+  taskerStore.openDrawer()
+}
 
 // 更新时间
 const updateTime = () => {
-  const now = new Date()
-  currentTime.value = now.toLocaleString('zh-CN', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit'
-  })
+  const now = dayjs().tz('Asia/Shanghai')
+  currentTime.value = now.format('YYYY年MM月DD日 HH:mm:ss')
 }
 
 // 定时器
@@ -123,7 +117,7 @@ onUnmounted(() => {
 
 <style scoped lang="less">
 .status-bar {
-  // background: white;
+  // background: var(--gray-0);
   // backdrop-filter: blur(10px);
   // height: 60px;
   display: flex;
@@ -157,13 +151,13 @@ onUnmounted(() => {
   .system-name {
     font-size: 20px;
     font-weight: 600;
-    color: #111827;
+    color: var(--gray-900, #111827);
     line-height: 1.4;
   }
 
   .system-subtitle {
     font-size: 13px;
-    color: #6b7280;
+    color: var(--gray-600, #6b7280);
     line-height: 1.2;
   }
 }
@@ -171,7 +165,57 @@ onUnmounted(() => {
 .status-right {
   display: flex;
   align-items: center;
-  gap: 20px;
+  gap: 18px;
+  font-size: 13px;
+}
+
+.task-center-entry {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  user-select: none;
+}
+
+.task-center-badge {
+  display: flex;
+  align-items: center;
+}
+
+.task-center-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background-color: transparent;
+  color: var(--main-600, #2563eb);
+  font-size: 13px;
+  font-weight: 500;
+  border: 1px solid rgba(37, 99, 235, 0.3);
+  transition:
+    background-color 0.2s ease,
+    border-color 0.2s ease,
+    color 0.2s ease;
+}
+
+.task-center-button .icon {
+  width: 15px;
+  height: 15px;
+  color: inherit;
+}
+
+.task-center-label {
+  letter-spacing: 0.2px;
+}
+
+.task-center-entry:hover .task-center-button {
+  background-color: rgba(37, 99, 235, 0.08);
+  color: var(--main-700, #1d4ed8);
+  border-color: rgba(37, 99, 235, 0.5);
+}
+
+.task-center-badge :deep(.ant-badge-count) {
+  background-color: var(--main-color, #1d4ed8);
 }
 
 .time-info,
@@ -180,63 +224,20 @@ onUnmounted(() => {
   align-items: center;
   gap: 6px;
   font-size: 13px;
-  color: #6b7280;
+  line-height: 1.3;
+  color: var(--gray-600, #4b5563);
 
   .icon {
-    width: 14px;
-    height: 14px;
+    width: 15px;
+    height: 15px;
+    color: var(--gray-600, #6b7280);
   }
 }
 
 .current-time,
 .user-greeting {
   font-weight: 500;
-}
-
-.status-indicator {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 6px;
-  border-radius: 4px;
-  font-size: 11px;
-  font-weight: 500;
-
-  &.online {
-    background-color: #f0fdf4;
-    color: #16a34a;
-
-    .status-dot {
-      width: 6px;
-      height: 6px;
-      border-radius: 50%;
-      background-color: #16a34a;
-    }
-  }
-
-  &.offline {
-    background-color: #fef2f2;
-    color: #dc2626;
-
-    .status-dot {
-      width: 6px;
-      height: 6px;
-      border-radius: 50%;
-      background-color: #dc2626;
-    }
-  }
-
-  &.maintenance {
-    background-color: #fffbeb;
-    color: #d97706;
-
-    .status-dot {
-      width: 6px;
-      height: 6px;
-      border-radius: 50%;
-      background-color: #d97706;
-    }
-  }
+  color: var(--gray-900, #111827);
 }
 
 // 响应式设计

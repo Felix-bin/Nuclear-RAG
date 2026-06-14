@@ -14,9 +14,8 @@ export default defineConfig(({ mode }) => {
     server: {
       proxy: {
         '^/api': {
-          target: env.VITE_API_URL || 'http://127.0.0.1:5050',
-          changeOrigin: true,
-          rewrite: (path) => path.replace(/^\/api/, '/api')
+          target: env.VITE_API_URL || 'http://api:5050',
+          changeOrigin: true
         }
       },
       watch: {
@@ -24,11 +23,6 @@ export default defineConfig(({ mode }) => {
         ignored: ['**/node_modules/**', '**/dist/**'],
       },
       host: '0.0.0.0',
-      allowedHosts: [
-        'localhost',
-        '127.0.0.1',
-        'bzf.qzz.io'  // 添加这行
-      ]
     }
   }
 })

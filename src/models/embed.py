@@ -11,7 +11,7 @@ from src.utils import get_docker_safe_url, hashstr, logger
 
 
 class BaseEmbeddingModel(ABC):
-    def __init__(self, model=None, name=None, dimension=None, url=None, base_url=None, api_key=None):
+    def __init__(self, model=None, name=None, dimension=None, url=None, base_url=None, api_key=None, model_id=None):
         """
         Args:
             model: 模型名称，冗余设计，同name
@@ -46,8 +46,8 @@ class BaseEmbeddingModel(ABC):
         """等同于aencode"""
         return await self.aencode(queries)
 
-    def batch_encode(self, messages: list[str], batch_size: int = 40) -> list[list[float]]:
-        logger.info(f"开始批量编码，共 {len(messages)} 条消息，批次大小: {batch_size}")
+    def batch_encode(self, messages: list[str], batch_size: int = 10) -> list[list[float]]:
+        # logger.info(f"Batch encoding {len(messages)} messages")
         data = []
         task_id = None
         if len(messages) > batch_size:
@@ -56,7 +56,7 @@ class BaseEmbeddingModel(ABC):
 
         for i in range(0, len(messages), batch_size):
             group_msg = messages[i : i + batch_size]
-            logger.info(f"正在编码 [{i}/{len(messages)}] 条消息 (批次大小={batch_size})")
+            logger.info(f"Encoding [{i}/{len(messages)}] messages (bsz={batch_size})")
             response = self.encode(group_msg)
             data.extend(response)
             if task_id:
@@ -65,52 +65,62 @@ class BaseEmbeddingModel(ABC):
         if task_id:
             self.embed_state[task_id]["status"] = "completed"
 
-        logger.info(f"批量编码完成，共编码 {len(messages)} 条消息")
         return data
 
-    async def abatch_encode(self, messages: list[str], batch_size: int = 40) -> list[list[float]]:
-        logger.info(f"开始异步批量编码，共 {len(messages)} 条消息，批次大小: {batch_size}")
+    async def abatch_encode(self, messages: list[str], batch_size: int = 10) -> list[list[float]]:
         data = []
         task_id = None
         if len(messages) > batch_size:
             task_id = hashstr(messages)
             self.embed_state[task_id] = {"status": "in-progress", "total": len(messages), "progress": 0}
 
-        # 顺序处理而非并行，避免触发API限流
+        # 保留原有逻辑：
+        # 使用 asyncio.gather 并发执行所有 embedding 批次请求：
+        # tasks = []
+        # for i in range(0, len(messages), batch_size):
+        #     group_msg = messages[i : i + batch_size]
+        #     tasks.append(self.aencode(group_msg))
+
+        # results = await asyncio.gather(*tasks)
+        # for res in results:
+        #     data.extend(res)
+
+        # if task_id:
+        #     self.embed_state[task_id]["progress"] = len(messages)
+        #     self.embed_state[task_id]["status"] = "completed"
+
+        # return data
+
         for i in range(0, len(messages), batch_size):
             group_msg = messages[i : i + batch_size]
-            logger.info(f"正在异步编码 [{i}/{len(messages)}] 条消息 (批次大小={batch_size})")
-            
-            # 添加重试逻辑
-            max_retries = 3
-            for attempt in range(max_retries):
-                try:
-                    result = await self.aencode(group_msg)
-                    data.extend(result)
-                    
-                    if task_id:
-                        self.embed_state[task_id]["progress"] = i + len(group_msg)
-                    
-                    # 添加延迟避免限流（每批之间等待0.5秒）
-                    if i + batch_size < len(messages):
-                        await asyncio.sleep(0.5)
-                    break
-                    
-                except Exception as e:
-                    if attempt < max_retries - 1 and "429" in str(e):
-                        # 如果是限流错误，等待后重试
-                        wait_time = (attempt + 1) * 2  # 2秒、4秒、6秒
-                        logger.warning(f"API限流，等待 {wait_time} 秒后重试... (尝试 {attempt + 1}/{max_retries})")
-                        await asyncio.sleep(wait_time)
-                    else:
-                        raise
+            logger.info(f"Async encoding [{i}/{len(messages)}] messages (bsz={batch_size})")
+            res = await self.aencode(group_msg)
+            data.extend(res)
+            if task_id:
+                self.embed_state[task_id]["progress"] = i + len(group_msg)
 
         if task_id:
-            self.embed_state[task_id]["progress"] = len(messages)
             self.embed_state[task_id]["status"] = "completed"
 
-        logger.info(f"异步批量编码完成，共编码 {len(messages)} 条消息")
         return data
+
+    async def test_connection(self) -> tuple[bool, str]:
+        """
+        测试embedding模型的连接性
+
+        Returns:
+            tuple: (success: bool, message: str)
+        """
+        try:
+            # 使用简单的测试文本
+            test_text = ["Hello world"]
+            await self.aencode(test_text)
+            return True, "连接正常"
+        except Exception as e:
+            error_msg = str(e)
+            error_msg += f", maybe you can check the `{self.base_url}` end with /embeddings as examples."
+            logger.error(error_msg)
+            return False, error_msg
 
 
 class OllamaEmbedding(BaseEmbeddingModel):
@@ -145,6 +155,7 @@ class OllamaEmbedding(BaseEmbeddingModel):
         payload = {"model": self.model, "input": message}
         async with httpx.AsyncClient() as client:
             try:
+                print(f"\n\n\nOllama Embedding request: {payload}\n\n\n")
                 response = await client.post(self.base_url, json=payload, timeout=60)
                 response.raise_for_status()
                 result = response.json()
@@ -152,8 +163,7 @@ class OllamaEmbedding(BaseEmbeddingModel):
                     raise ValueError(f"Ollama Embedding failed: Invalid response format {result}")
                 return result["embeddings"]
             except (httpx.RequestError, json.JSONDecodeError) as e:
-                logger.error(f"Ollama Embedding async request failed: {e}, {payload}")
-                raise ValueError(f"Ollama Embedding async request failed: {e}")
+                raise ValueError(f"Ollama Embedding async request failed: {e}, {payload}, {self.base_url=}")
 
 
 class OtherEmbedding(BaseEmbeddingModel):
@@ -188,24 +198,7 @@ class OtherEmbedding(BaseEmbeddingModel):
                     raise ValueError(f"Other Embedding failed: Invalid response format {result}")
                 return [item["embedding"] for item in result["data"]]
             except (httpx.RequestError, json.JSONDecodeError) as e:
-                logger.error(f"Other Embedding async request failed: {e}, {payload}")
-                raise ValueError(f"Other Embedding async request failed: {e}")
-
-    async def test_connection(self) -> tuple[bool, str]:
-        """
-        测试embedding模型的连接性
-
-        Returns:
-            tuple: (success: bool, message: str)
-        """
-        try:
-            # 使用简单的测试文本
-            test_text = ["Hello world"]
-            await self.aencode(test_text)
-            return True, "连接正常"
-        except Exception as e:
-            error_msg = str(e)
-            return False, error_msg
+                raise ValueError(f"Other Embedding async request failed: {e}, {payload}, {self.base_url=}")
 
 
 async def test_embedding_model_status(model_id: str) -> dict:
@@ -277,10 +270,12 @@ def select_embedding_model(model_id):
     if provider == "local":
         raise ValueError("Local embedding model is not supported, please use other embedding models")
 
-    elif provider == "ollama":
-        model = OllamaEmbedding(**config.embed_model_names[model_id])
+    # 获取嵌入模型配置并转换为字典
+    embed_config = config.embed_model_names[model_id].model_dump()
 
+    if provider == "ollama":
+        model = OllamaEmbedding(**embed_config)
     else:
-        model = OtherEmbedding(**config.embed_model_names[model_id])
+        model = OtherEmbedding(**embed_config)
 
     return model

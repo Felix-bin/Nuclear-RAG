@@ -1,22 +1,169 @@
 import asyncio
+import base64
 import os
-import tempfile
+import re
 import time
+import zipfile
 from pathlib import Path
 
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+import aiofiles
+from docling.datamodel.base_models import InputFormat
+from docling.document_converter import DocumentConverter
 from langchain_community.document_loaders import (
     CSVLoader,
-    Docx2txtLoader,
     JSONLoader,
     PyPDFLoader,
     TextLoader,
     UnstructuredHTMLLoader,
     UnstructuredMarkdownLoader,
+    UnstructuredWordDocumentLoader,
+)
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from markdownify import markdownify as md_convert
+
+from src.knowledge.utils import calculate_content_hash
+from src.storage.minio import get_minio_client
+from src.utils import hashstr, logger
+
+SUPPORTED_FILE_EXTENSIONS: tuple[str, ...] = (
+    ".txt",
+    ".md",
+    ".docx",
+    ".html",
+    ".htm",
+    ".json",
+    ".csv",
+    ".xls",
+    ".xlsx",
+    ".pdf",
+    ".pptx",
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".bmp",
+    ".tiff",
+    ".tif",
+    ".zip",
 )
 
-from src import config
-from src.utils import logger
+
+def is_supported_file_extension(file_name: str | os.PathLike[str]) -> bool:
+    """Check whether the given file path has a supported extension."""
+    return Path(file_name).suffix.lower() in SUPPORTED_FILE_EXTENSIONS
+
+
+# Docling 文档转换器（单例模式）
+_docling_converter: DocumentConverter | None = None
+
+
+def _get_docling_converter() -> DocumentConverter:
+    """获取 Docling 文档转换器单例"""
+    global _docling_converter
+    if _docling_converter is None:
+        _docling_converter = DocumentConverter(
+            format_options={
+                InputFormat.DOCX: None,
+                InputFormat.XLSX: None,
+                InputFormat.PPTX: None,
+            }
+        )
+    return _docling_converter
+
+
+def _upload_image_to_minio(image_data: bytes, filename: str, db_id: str) -> str:
+    """上传图片到 MinIO，返回 URL"""
+    minio_client = get_minio_client()
+    minio_client.ensure_bucket_exists("kb-images")
+    file_id = hashstr(filename, length=16)
+    timestamp = int(time.time() * 1000000)
+    suffix = Path(filename).suffix.lower()
+    object_name = f"{db_id}/{file_id}/images/{timestamp}_{Path(filename).name}"
+    content_type_map = {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".gif": "image/gif",
+        ".webp": "image/webp",
+        ".bmp": "image/bmp",
+        ".tif": "image/tiff",
+        ".tiff": "image/tiff",
+    }
+    content_type = content_type_map.get(suffix, "image/jpeg")
+
+    result = minio_client.upload_file(
+        bucket_name="kb-images",
+        object_name=object_name,
+        data=image_data,
+        content_type=content_type,
+    )
+    return result.url
+
+
+def _parse_data_uri(data_uri: str) -> tuple[bytes, str]:
+    """解析 data URI，返回 (image_data, mime_type)"""
+    header, base64_data = data_uri.split(",", 1)
+    mime_type = header.split(":")[1].split(";")[0]
+    image_data = base64.b64decode(base64_data)
+    return image_data, mime_type
+
+
+def _convert_with_docling(file_path: Path, params: dict | None = None) -> str:
+    """
+    使用 Docling 将 docx/xlsx/pptx 转换为 Markdown
+
+    Args:
+        file_path: 文件路径
+        params: 参数，包含 db_id 用于图片上传
+
+    Returns:
+        Markdown 字符串
+    """
+    params = params or {}
+    db_id = params.get("db_id") or "docling-docs"
+
+    converter = _get_docling_converter()
+    result = converter.convert(file_path)
+
+    if result.status.name != "SUCCESS":
+        raise RuntimeError(f"Docling 转换失败: {result.status}")
+
+    doc = result.document
+
+    # 提取图片并上传到 MinIO
+    if hasattr(doc, "pictures") and doc.pictures:
+        image_refs: list[tuple[str, bytes]] = []
+
+        for pic in doc.pictures:
+            if hasattr(pic, "image") and hasattr(pic.image, "uri"):
+                uri = str(pic.image.uri)
+                if uri.startswith("data:"):
+                    image_data, mime_type = _parse_data_uri(uri)
+                    timestamp = int(time.time() * 1000000)  # 微秒级时间戳
+                    filename = f"image_{timestamp}.{mime_type.split('/')[-1]}"
+                    image_refs.append((filename, image_data))
+
+        # 上传图片并收集 URL
+        image_urls: list[str] = []
+        for filename, image_data in image_refs:
+            try:
+                url = _upload_image_to_minio(image_data, filename, db_id)
+                image_urls.append(f"![{filename}]({url})")
+            except Exception as e:
+                logger.error(f"上传图片失败 {filename}: {e}")
+                image_urls.append(f"[图片: {filename}]")
+
+        # 导出 Markdown
+        markdown = doc.export_to_markdown()
+
+        # 替换 <!-- image --> 占位符为图片 URL
+        # Docling 使用 <!-- image --> 作为占位符
+        for url in reversed(image_urls):
+            markdown = re.sub(r"<!--\s*image\s*-->", url, markdown, count=1)
+
+        return markdown
+
+    # 无图片时直接导出
+    return doc.export_to_markdown()
 
 
 def chunk_with_parser(file_path, params=None):
@@ -41,7 +188,7 @@ def chunk_with_parser(file_path, params=None):
         loader = UnstructuredMarkdownLoader(file_path)
 
     elif file_type in [".docx", ".doc"]:
-        loader = Docx2txtLoader(file_path)
+        loader = UnstructuredWordDocumentLoader(file_path)
 
     elif file_type in [".html", ".htm"]:
         loader = UnstructuredHTMLLoader(file_path)
@@ -142,127 +289,65 @@ def parse_pdf(file, params=None):
         str: 解析得到的文本
 
     Raises:
-        OCRServiceException: OCR服务不可用时抛出
+        DocumentProcessorException: 处理失败时抛出
     """
-    from src.processors._ocr import OCRServiceException
+    from src.plugins.document_processor_base import DocumentProcessorException
+    from src.plugins.document_processor_factory import DocumentProcessorFactory
 
     params = params or {}
     opt_ocr = params.get("enable_ocr", "disable")
-    logger.debug(f"开始解析 PDF 文件: {file}, OCR 模式: {opt_ocr}")
 
     if opt_ocr == "disable":
-        logger.debug(f"OCR 已禁用，使用标准 PDF 读取器: {file}")
-        result = pdfreader(file, params=params)
-        logger.debug(f"PDF 读取完成，文本长度: {len(result)} 字符")
-        return result
+        return pdfreader(file, params=params)
 
     try:
-        if opt_ocr == "mineru_ocr":
-            logger.debug(f"使用 mineru_ocr 处理 PDF: {file}")
-            from src.processors import ocr
+        return DocumentProcessorFactory.process_file(opt_ocr, file, params)
 
-            result = ocr.process_file_mineru(file, params=params)
-            logger.debug(f"mineru_ocr 处理完成，文本长度: {len(result)} 字符")
-            return result
-
-        elif opt_ocr == "mineru_cloud":
-            logger.debug(f"使用 mineru_cloud 处理 PDF: {file}")
-            from src.processors import ocr
-
-            result = ocr.process_file_mineru_cloud(file, params=params)
-            logger.debug(f"mineru_cloud 处理完成，文本长度: {len(result)} 字符")
-            return result
-
-        elif opt_ocr == "paddlex_ocr":
-            logger.debug(f"使用 paddlex_ocr 处理 PDF: {file}")
-            from src.processors import ocr
-
-            result = ocr.process_file_paddlex(file, params=params)
-            logger.debug(f"paddlex_ocr 处理完成，文本长度: {len(result)} 字符")
-            return result
-
-        elif opt_ocr == "unstructured":
-            logger.debug(f"使用 unstructured 处理 PDF: {file}")
-            from src.processors import ocr
-            
-            # Unstructured 自动启用元数据保存以生成可视化
-            unstructured_params = params.copy() if params else {}
-            unstructured_params["save_metadata"] = True
-
-            result = ocr.process_file_unstructured(file, params=unstructured_params)
-            logger.debug(f"unstructured 处理完成，文本长度: {len(result)} 字符")
-            return result
-
-        else:
-            raise ValueError(f"不支持的OCR方式: {opt_ocr}")
-
-    except OCRServiceException as e:
-        logger.error(f"OCR service failed: {e.service_name} - {str(e)}")
+    except DocumentProcessorException as e:
+        logger.error(f"文档处理失败: {e.service_name} - {str(e)}")
         raise
     except Exception as e:
-        logger.error(f"PDF parsing failed: {str(e)}")
-        raise OCRServiceException(f"PDF解析失败: {str(e)}", opt_ocr, "parsing_failed")
+        logger.error(f"PDF 解析失败: {str(e)}")
+        raise DocumentProcessorException(f"PDF解析失败: {str(e)}", opt_ocr, "parsing_failed")
 
 
 def parse_image(file, params=None):
     """
     解析图像文件，支持多种OCR方式
+
+    Args:
+        file: 图像文件路径
+        params: 参数字典，包含enable_ocr设置
+
+    Returns:
+        str: 解析得到的文本
+
+    Raises:
+        DocumentProcessorException: 处理失败时抛出
+        ValueError: 图像文件禁用OCR时抛出
     """
-    from src.processors._ocr import OCRServiceException
+    from src.plugins.document_processor_base import DocumentProcessorException
+    from src.plugins.document_processor_factory import DocumentProcessorFactory
 
     params = params or {}
     opt_ocr = params.get("enable_ocr", "disable")
-    logger.debug(f"开始解析图片文件: {file}, OCR 模式: {opt_ocr}")
 
+    # 图像文件必须使用 OCR,不能禁用
     if opt_ocr == "disable":
-        raise ValueError(f"图片文件必须启用OCR处理: {file}。请选择 mineru_ocr、mineru_cloud、paddlex_ocr 或 unstructured 之一")
+        raise ValueError(
+            "图像文件必须启用OCR才能提取文本内容。"
+            "请选择OCR方式 (onnx_rapid_ocr/mineru_ocr/mineru_official/paddlex_ocr) 或移除该文件。"
+        )
 
     try:
-        if opt_ocr == "mineru_ocr":
-            logger.debug(f"使用 mineru_ocr 处理图片: {file}")
-            from src.processors import ocr
+        return DocumentProcessorFactory.process_file(opt_ocr, file, params)
 
-            result = ocr.process_file_mineru(file, params=params)
-            logger.debug(f"mineru_ocr 处理完成，文本长度: {len(result)} 字符")
-            return result
-
-        elif opt_ocr == "mineru_cloud":
-            logger.debug(f"使用 mineru_cloud 处理图片: {file}")
-            from src.processors import ocr
-
-            result = ocr.process_file_mineru_cloud(file, params=params)
-            logger.debug(f"mineru_cloud 处理完成，文本长度: {len(result)} 字符")
-            return result
-
-        elif opt_ocr == "paddlex_ocr":
-            logger.debug(f"使用 paddlex_ocr 处理图片: {file}")
-            from src.processors import ocr
-
-            result = ocr.process_file_paddlex(file, params=params)
-            logger.debug(f"paddlex_ocr 处理完成，文本长度: {len(result)} 字符")
-            return result
-
-        elif opt_ocr == "unstructured":
-            logger.debug(f"使用 unstructured 处理图片: {file}")
-            from src.processors import ocr
-            
-            # Unstructured 自动启用元数据保存以生成可视化
-            unstructured_params = params.copy() if params else {}
-            unstructured_params["save_metadata"] = True
-
-            result = ocr.process_file_unstructured(file, params=unstructured_params)
-            logger.debug(f"unstructured 处理完成，文本长度: {len(result)} 字符")
-            return result
-
-        else:
-            raise ValueError(f"不支持的OCR方式: {opt_ocr}")
-
-    except OCRServiceException as e:
-        logger.error(f"OCR service failed: {e.service_name} - {str(e)}")
+    except DocumentProcessorException as e:
+        logger.error(f"图像处理失败: {e.service_name} - {str(e)}")
         raise
     except Exception as e:
-        logger.error(f"Image parsing failed: {str(e)}")
-        raise OCRServiceException(f"Image解析失败: {str(e)}", opt_ocr, "parsing_failed")
+        logger.error(f"图像解析失败: {str(e)}")
+        raise DocumentProcessorException(f"图像解析失败: {str(e)}", opt_ocr, "parsing_failed")
 
 
 async def parse_pdf_async(file, params=None):
@@ -275,111 +360,395 @@ async def parse_image_async(file, params=None):
 
 async def process_file_to_markdown(file_path: str, params: dict | None = None) -> str:
     """
-    将不同类型的文件转换为markdown格式
+    将不同类型的文件转换为markdown格式 - 支持本地文件和MinIO文件
 
     Args:
-        file_path: 文件路径
-        params: 处理参数
+        file_path: 文件路径或MinIO URL
+        params: 处理参数，对于ZIP文件需要包含 db_id
 
     Returns:
         markdown格式内容
+
+    Note:
+        对于ZIP文件，会在params中保存处理结果供调用方使用：
+        - params['_zip_images_info']: 图片信息列表
+        - params['_zip_content_hash']: 内容哈希值
     """
-    file_path_obj = Path(file_path)
-    file_ext = file_path_obj.suffix.lower()
-    logger.debug(f"开始处理文件到 Markdown: {file_path}, 文件类型: {file_ext}")
+    import os
+    import tempfile
 
-    if file_ext == ".pdf":
-        # 使用 OCR 处理 PDF
-        logger.debug(f"检测到 PDF 文件，开始使用 OCR 处理: {file_path}")
-        text = await parse_pdf_async(str(file_path_obj), params=params)
-        logger.debug(f"PDF 处理完成，文本长度: {len(text)} 字符")
-        return f"# {file_path_obj.name}\n\n{text}"
+    # 检测是否是MinIO URL
+    from src.knowledge.utils.kb_utils import is_minio_url
 
-    elif file_ext in [".txt", ".md"]:
-        # 直接读取文本文件
-        logger.debug(f"检测到文本文件，开始读取: {file_path}")
-        with open(file_path_obj, encoding="utf-8") as f:
-            content = f.read()
-        logger.debug(f"文本文件读取完成，内容长度: {len(content)} 字符")
-        return f"# {file_path_obj.name}\n\n{content}"
+    if is_minio_url(file_path):
+        # 从MinIO下载文件到临时位置
+        logger.debug(f"Downloading file from MinIO: {file_path}")
 
-    elif file_ext in [".doc", ".docx"]:
-        # 处理 Word 文档
-        logger.debug(f"检测到 Word 文档，开始处理: {file_path}")
-        from docx import Document  # type: ignore
+        # 从MinIO URL中提取文件名
+        if "?" in file_path:
+            file_path_clean = file_path.split("?")[0]
+        else:
+            file_path_clean = file_path
 
-        doc = Document(file_path_obj)
-        text = "\n".join([para.text for para in doc.paragraphs])
-        logger.debug(f"Word 文档处理完成，文本长度: {len(text)} 字符")
-        return f"# {file_path_obj.name}\n\n{text}"
+        original_filename = file_path_clean.split("/")[-1]
 
-    elif file_ext in [".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif"]:
-        # 使用 OCR 处理图片
-        logger.debug(f"检测到图片文件，开始使用 OCR 处理: {file_path}")
-        text = await parse_image_async(str(file_path_obj), params=params)
-        logger.debug(f"图片 OCR 处理完成，文本长度: {len(text)} 字符")
-        return f"# {file_path_obj.name}\n\n{text}"
+        # 创建临时文件
+        with tempfile.NamedTemporaryFile(delete=False, suffix=Path(original_filename).suffix) as temp_file:
+            temp_path = temp_file.name
 
-    elif file_ext in [".html", ".htm"]:
-        # 使用 BeautifulSoup 处理 HTML 文件
-        from markdownify import markdownify as md
+        try:
+            # 使用通用函数解析MinIO URL并下载文件
+            from src.knowledge.utils.kb_utils import parse_minio_url
+            from src.storage.minio.client import get_minio_client
 
-        with open(file_path_obj, encoding="utf-8") as f:
-            content = f.read()
-        text = md(content, heading_style="ATX")
-        return f"# {file_path_obj.name}\n\n{text}"
+            # 解析MinIO URL获取bucket_name和object_name
+            bucket_name, object_name = parse_minio_url(file_path)
 
-    elif file_ext == ".csv":
-        # 处理 CSV 文件
-        import pandas as pd
+            # 获取MinIO客户端并下载文件
+            minio_client = get_minio_client()
+            file_content = await minio_client.adownload_file(bucket_name, object_name)
 
-        df = pd.read_csv(file_path_obj)
-        # 将每一行数据与表头组合成独立的表格
-        markdown_content = f"# {file_path_obj.name}\n\n"
+            # 写入临时文件
+            async with aiofiles.open(temp_path, "wb") as f:
+                await f.write(file_content)
 
-        for index, row in df.iterrows():
-            # 创建包含表头和当前行的小表格
-            row_df = pd.DataFrame([row], columns=df.columns)
-            markdown_table = row_df.to_markdown(index=False)
-            markdown_content += f"{markdown_table}\n\n"
+            logger.debug(f"File downloaded to temp path: {temp_path}")
 
-        return markdown_content.strip()
+            # 使用临时文件路径
+            actual_file_path = temp_path
 
-    elif file_ext in [".xls", ".xlsx"]:
-        # 处理 Excel 文件
-        import pandas as pd
+        except Exception as e:
+            # 清理临时文件
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
+            logger.error(f"Failed to download file from MinIO: {e}")
+            raise ValueError(f"无法从MinIO下载文件: {e}")
+    else:
+        # 本地文件
+        actual_file_path = file_path
 
-        # 读取所有工作表
-        excel_file = pd.ExcelFile(file_path_obj)
-        markdown_content = f"# {file_path_obj.name}\n\n"
+    try:
+        file_path_obj = Path(actual_file_path)
+        file_ext = file_path_obj.suffix.lower()
+        original_filename = file_path_obj.name
 
-        for sheet_name in excel_file.sheet_names:
-            df = pd.read_excel(file_path_obj, sheet_name=sheet_name)
-            markdown_content += f"## {sheet_name}\n\n"
+        if file_ext == ".pdf":
+            # 使用 OCR 处理 PDF
+            text = await parse_pdf_async(str(file_path_obj), params=params)
+            result = f"{text}"
 
+        elif file_ext in [".txt", ".md"]:
+            # 直接读取文本文件
+            with open(file_path_obj, encoding="utf-8") as f:
+                content = f.read()
+            result = f"{content}"
+
+        elif file_ext in [".docx", ".pptx"]:
+            # 使用 Docling 处理 docx 和 pptx
+            result = _convert_with_docling(file_path_obj, params=params)
+
+        elif file_ext == ".doc":
+            # 旧版 .doc 文件仍使用原有解析方式
+            from langchain_community.document_loaders import UnstructuredWordDocumentLoader
+
+            loader = UnstructuredWordDocumentLoader(str(file_path_obj))
+            docs = loader.load()
+            result = "\n".join(doc.page_content for doc in docs).strip()
+
+        elif file_ext in [".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif"]:
+            # 使用 OCR 处理图片
+            text = await parse_image_async(str(file_path_obj), params=params)
+            result = f"{text}"
+
+        elif file_ext in [".html", ".htm"]:
+            # 使用 BeautifulSoup 处理 HTML 文件
+            from markdownify import markdownify as md
+
+            with open(file_path_obj, encoding="utf-8") as f:
+                content = f.read()
+            text = md(content, heading_style="ATX")
+            result = f"{text}"
+
+        elif file_ext == ".csv":
+            # 处理 CSV 文件
+            import pandas as pd
+
+            df = pd.read_csv(file_path_obj)
             # 将每一行数据与表头组合成独立的表格
+            markdown_content = ""
+
             for index, row in df.iterrows():
                 # 创建包含表头和当前行的小表格
                 row_df = pd.DataFrame([row], columns=df.columns)
                 markdown_table = row_df.to_markdown(index=False)
                 markdown_content += f"{markdown_table}\n\n"
 
-        return markdown_content.strip()
+            result = markdown_content.strip()
 
-    elif file_ext == ".json":
-        # 处理 JSON 文件
-        import json
+        elif file_ext in [".xls", ".xlsx"]:
+            # 使用 Docling 处理 Excel 文件
+            result = _convert_with_docling(file_path_obj, params=params)
 
-        with open(file_path_obj, encoding="utf-8") as f:
-            data = json.load(f)
-        # 将 JSON 数据格式化为 markdown 代码块
-        json_str = json.dumps(data, ensure_ascii=False, indent=2)
-        return f"# {file_path_obj.name}\n\n```json\n{json_str}\n```"
+        elif file_ext == ".json":
+            # 处理 JSON 文件
+            import json
 
-    else:
-        # 尝试作为文本文件读取
-        raise ValueError(f"Unsupported file type: {file_ext}")
+            async with aiofiles.open(file_path_obj, encoding="utf-8") as f:
+                content = await f.read()
+            data = json.loads(content)
+            # 将 JSON 数据格式化为 markdown 代码块
+            json_str = json.dumps(data, ensure_ascii=False, indent=2)
+            result = f"```json\n{json_str}\n```"
+
+        elif file_ext == ".zip":
+            if not params or "db_id" not in params:
+                raise ValueError("ZIP文件处理需要在params中提供db_id参数")
+
+            zip_result = await _process_zip_file(str(file_path_obj), params["db_id"])
+
+            # 将处理结果保存到params中供调用方使用
+            params["_zip_images_info"] = zip_result["images_info"]
+            params["_zip_content_hash"] = zip_result["content_hash"]
+
+            result = zip_result["markdown_content"]
+
+        else:
+            # 尝试作为文本文件读取
+            raise ValueError(f"Unsupported file type: {file_ext}")
+
+    except Exception:
+        # 清理临时文件
+        if is_minio_url(file_path) and os.path.exists(actual_file_path):
+            try:
+                os.unlink(actual_file_path)
+                logger.debug(f"Cleaned up temp file: {actual_file_path}")
+            except Exception as cleanup_e:
+                logger.warning(f"Failed to clean up temp file {actual_file_path}: {cleanup_e}")
+        raise
+
+    finally:
+        # 清理临时文件
+        if is_minio_url(file_path) and os.path.exists(actual_file_path):
+            try:
+                os.unlink(actual_file_path)
+                logger.debug(f"Cleaned up temp file: {actual_file_path}")
+            except Exception as e:
+                logger.warning(f"Failed to clean up temp file {actual_file_path}: {e}")
+
+    return result
 
 
-# 从 url_processor 模块导入 URL 处理函数（保持向后兼容）
-from .url_processor import convert_url_to_pdf_with_ilovepdf, process_url_to_markdown
+async def _process_zip_file(zip_path: str, db_id: str) -> dict:
+    """
+    处理ZIP文件，提取markdown内容和图片（内部函数）
+
+    Args:
+        zip_path: ZIP文件路径
+        db_id: 数据库ID
+
+    Returns:
+        dict: {
+            "markdown_content": str,      # markdown内容
+            "content_hash": str,         # 内容哈希值
+            "images_info": list[dict]    # 图片信息列表
+        }
+
+    Raises:
+        FileNotFoundError: ZIP文件不存在
+        ValueError: ZIP文件格式错误或内容不符合要求
+    """
+    # 1. 安全检查
+    if not os.path.exists(zip_path):
+        raise FileNotFoundError(f"ZIP 文件不存在: {zip_path}")
+
+    # 2. 解压ZIP并提取内容
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        # 安全检查：防止路径遍历攻击
+        for name in zf.namelist():
+            if name.startswith("/") or name.startswith("\\"):
+                raise ValueError(f"ZIP 包含不安全路径: {name}")
+            if ".." in Path(name).parts:
+                raise ValueError(f"ZIP 路径包含上级引用: {name}")
+
+        # 查找markdown文件
+        md_files = [n for n in zf.namelist() if n.lower().endswith(".md")]
+        if not md_files:
+            raise ValueError("压缩包中未找到 .md 文件")
+
+        # 优先使用 full.md，否则使用第一个md文件
+        md_file = next((n for n in md_files if Path(n).name == "full.md"), md_files[0])
+
+        # 读取markdown内容
+        with zf.open(md_file) as f:
+            markdown_content = f.read().decode("utf-8")
+
+        # 3. 处理图片
+        images_info = []
+        images_dir = _find_images_directory(zf, md_file)
+
+        if images_dir:
+            images_info = await _process_images(zf, images_dir, db_id, md_file)
+            markdown_content = _replace_image_links(markdown_content, images_info)
+
+    # 4. 生成结果
+    content_hash = await calculate_content_hash(markdown_content.encode("utf-8"))
+
+    return {
+        "markdown_content": markdown_content,
+        "content_hash": content_hash,
+        "images_info": images_info,
+    }
+
+
+def _find_images_directory(zip_file: zipfile.ZipFile, md_file_path: str) -> str | None:
+    """查找images目录"""
+    md_parent = Path(md_file_path).parent
+
+    # 候选目录
+    candidates = []
+    if str(md_parent) != ".":
+        candidates.extend([str(md_parent / "images"), str(md_parent.parent / "images")])
+    candidates.append("images")
+
+    # 查找存在的目录
+    for cand in candidates:
+        cand_clean = cand.rstrip("/")
+        if any(n.startswith(cand_clean + "/") for n in zip_file.namelist()):
+            return cand_clean
+
+    return None
+
+
+async def _process_images(zip_file: zipfile.ZipFile, images_dir: str, db_id: str, md_file_path: str) -> list[dict]:
+    """处理图片：上传到MinIO并返回信息"""
+    # 支持的图片格式
+    SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
+    CONTENT_TYPE_MAP = {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".gif": "image/gif",
+        ".webp": "image/webp",
+        ".bmp": "image/bmp",
+    }
+
+    images = []
+    image_names = [n for n in zip_file.namelist() if n.startswith(images_dir + "/")]
+
+    # 上传图片到MinIO
+    minio_client = get_minio_client()
+    bucket_name = "kb-images"
+    await asyncio.to_thread(minio_client.ensure_bucket_exists, bucket_name)
+
+    file_id = hashstr(Path(md_file_path).name, length=16)
+
+    for img_name in image_names:
+        suffix = Path(img_name).suffix.lower()
+        if suffix not in SUPPORTED_EXTENSIONS:
+            continue
+
+        try:
+            # 读取图片数据
+            with zip_file.open(img_name) as f:
+                data = f.read()
+
+            # 上传到MinIO
+            timestamp = int(time.time() * 1000000)
+            object_name = f"{db_id}/{file_id}/images/{timestamp}_{Path(img_name).name}"
+            content_type = CONTENT_TYPE_MAP.get(suffix, "image/jpeg")
+
+            result = await minio_client.aupload_file(
+                bucket_name=bucket_name,
+                object_name=object_name,
+                data=data,
+                content_type=content_type,
+            )
+
+            # 记录图片信息
+            img_info = {"name": Path(img_name).name, "url": result.url, "path": f"images/{Path(img_name).name}"}
+            images.append(img_info)
+
+            logger.debug(f"图片上传成功: {Path(img_name).name} -> {result.url}")
+
+        except Exception as e:
+            logger.error(f"上传图片失败 {Path(img_name).name}: {e}")
+            continue
+
+    return images
+
+
+def _replace_image_links(markdown_content: str, images: list[dict]) -> str:
+    """替换markdown中的图片链接为MinIO URL"""
+    if not images:
+        return markdown_content
+
+    # 构建路径映射
+    image_map = {}
+    for img in images:
+        path = img["path"]
+        url = img["url"]
+        image_map[path] = url
+        image_map[f"/{path}"] = url
+        image_map[img["name"]] = url
+
+    def replace_link(match):
+        alt_text = match.group(1) or ""
+        img_path = match.group(2)
+
+        # 尝试匹配各种路径格式
+        for pattern, url in image_map.items():
+            if img_path.endswith(pattern) or img_path == pattern:
+                return f"![{alt_text}]({url})"
+
+        # 尝试文件名匹配
+        filename = os.path.basename(img_path)
+        if filename in image_map:
+            return f"![{alt_text}]({image_map[filename]})"
+
+        return match.group(0)
+
+    # 使用正则表达式替换图片链接
+    pattern = r"!\[([^\]]*)\]\(([^)]+)\)"
+    return re.sub(pattern, replace_link, markdown_content)
+
+
+async def process_url_to_markdown(url: str, params: dict | None = None) -> str:
+    """
+    Fetch a URL and convert its content to Markdown.
+
+    Args:
+        url: The URL to fetch.
+        params: Optional parameters (unused, kept for API compatibility).
+
+    Returns:
+        The Markdown content of the URL.
+    """
+    logger.info(f"Fetching URL: {url}")
+
+    try:
+        import httpx
+
+        # 使用异步 HTTP 客户端获取页面
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+            response = await client.get(url, headers={"User-Agent": "Mozilla/5.0"})
+            response.raise_for_status()
+            html_content = response.text
+
+        # 使用 readability 提取正文 HTML
+        from readability import Document
+
+        doc = Document(html_content)
+        body_html = doc.summary()
+
+        # 转换为 Markdown
+        markdown_content = md_convert(body_html, heading_style="atx")
+
+        logger.info(f"Successfully converted URL to Markdown: {url}")
+        return markdown_content
+
+    except httpx.HTTPError as e:
+        logger.error(f"Failed to fetch URL {url}: {e}")
+        raise ValueError(f"Failed to fetch URL: {e}")
+    except Exception as e:
+        logger.error(f"Failed to process URL {url}: {e}")
+        raise ValueError(f"Failed to process URL: {e}")

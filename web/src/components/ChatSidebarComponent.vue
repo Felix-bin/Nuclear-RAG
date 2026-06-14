@@ -1,83 +1,95 @@
 <template>
-  <div class="chat-sidebar" :class="{'sidebar-open': isSidebarOpen, 'no-transition': isInitialRender}">
-    <div class="sidebar-header">
-      <div class="header-title" v-if="singleMode">{{ selectedAgentName }}</div>
-      <div
-        v-else
-        class="agent-selector"
-        @click="openAgentModal"
-      > {{ selectedAgentName || '选择智能体' }}</div>
-      <div class="header-actions">
-        <div class="toggle-sidebar nav-btn" v-if="isSidebarOpen" @click="toggleCollapse">
-          <PanelLeftClose size="20" color="var(--gray-800)"/>
-        </div>
-      </div>
-    </div>
-    <div class="conversation-list-top">
-      <button type="text" @click="createNewChat" class="new-chat-btn">
-       <MessageSquarePlus size="20" /> 创建新对话
-      </button>
-    </div>
-    <div class="conversation-list">
-      <a-spin v-if="loading" />
-      <template v-else-if="Object.keys(groupedChats).length > 0">
-        <div v-for="(group, groupName) in groupedChats" :key="groupName" class="chat-group">
-          <div class="chat-group-title">{{ groupName }}</div>
+  <div
+    class="chat-sidebar"
+    :class="{ 'sidebar-open': chatUIStore.isSidebarOpen, 'no-transition': isInitialRender }"
+  >
+    <div class="sidebar-content">
+      <div class="sidebar-header">
+        <div class="header-title">{{ branding.name }}</div>
+        <div class="header-actions">
           <div
-            v-for="chat in group"
-            :key="chat.id"
-            class="conversation-item"
-            :class="{ 'active': currentChatId === chat.id }"
-            @click="selectChat(chat)"
+            class="toggle-sidebar nav-btn"
+            v-if="chatUIStore.isSidebarOpen"
+            @click="toggleCollapse"
           >
-            <div class="conversation-title">{{ chat.title || '新的对话' }}</div>
-            <div class="actions-mask"></div>
-            <div class="conversation-actions">
-              <a-dropdown :trigger="['click']" @click.stop>
-                <template #overlay>
-                  <a-menu>
-                    <a-menu-item key="delete" @click.stop="deleteChat(chat.id)" v-if="chat.id !== currentChatId">
-                      <DeleteOutlined /> 删除
-                    </a-menu-item>
-                    <a-menu-item key="rename" @click.stop="renameChat(chat.id)">
-                      <EditOutlined /> 重命名
-                    </a-menu-item>
-                  </a-menu>
-                </template>
-                <a-button type="text" class="more-btn" @click.stop>
-                  <MoreOutlined />
-                </a-button>
-              </a-dropdown>
-            </div>
+            <PanelLeftClose size="20" color="var(--gray-800)" />
           </div>
         </div>
-      </template>
-      <div v-else class="empty-list">
-        暂无对话历史
+      </div>
+      <div class="conversation-list-top">
+        <button
+          type="text"
+          @click="createNewChat"
+          class="new-chat-btn"
+          :disabled="chatUIStore.creatingNewChat"
+        >
+          <LoaderCircle v-if="chatUIStore.creatingNewChat" size="18" class="loading-icon" />
+          <MessageSquarePlus v-else size="18" />
+          创建新对话
+        </button>
+      </div>
+      <div class="conversation-list">
+        <template v-if="Object.keys(groupedChats).length > 0">
+          <div v-for="(group, groupName) in groupedChats" :key="groupName" class="chat-group">
+            <div class="chat-group-title">{{ groupName }}</div>
+            <div
+              v-for="chat in group"
+              :key="chat.id"
+              class="conversation-item"
+              :class="{ active: currentChatId === chat.id }"
+              @click="selectChat(chat)"
+            >
+              <div class="conversation-title">{{ chat.title || '新的对话' }}</div>
+              <div class="actions-mask"></div>
+              <div class="conversation-actions">
+                <a-dropdown :trigger="['click']" @click.stop>
+                  <template #overlay>
+                    <a-menu>
+                      <a-menu-item
+                        key="rename"
+                        @click.stop="renameChat(chat.id)"
+                        :icon="h(EditOutlined)"
+                      >
+                        重命名
+                      </a-menu-item>
+                      <a-menu-item
+                        key="delete"
+                        @click.stop="deleteChat(chat.id)"
+                        :icon="h(DeleteOutlined)"
+                      >
+                        删除
+                      </a-menu-item>
+                    </a-menu>
+                  </template>
+                  <a-button type="text" class="more-btn" @click.stop>
+                    <MoreOutlined />
+                  </a-button>
+                </a-dropdown>
+              </div>
+            </div>
+          </div>
+        </template>
+        <div v-else class="empty-list">暂无对话历史</div>
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, h } from 'vue';
-import {
-  DeleteOutlined,
-  EditOutlined,
-  MoreOutlined
-} from '@ant-design/icons-vue';
-import { message, Modal } from 'ant-design-vue';
-import { PanelLeftClose, MessageSquarePlus } from 'lucide-vue-next';
-import dayjs from 'dayjs';
-import 'dayjs/locale/zh-cn';
-import relativeTime from 'dayjs/plugin/relativeTime';
-import utc from 'dayjs/plugin/utc';
-import timezone from 'dayjs/plugin/timezone';
+import { computed, h } from 'vue'
+import { DeleteOutlined, EditOutlined, MoreOutlined } from '@ant-design/icons-vue'
+import { message, Modal } from 'ant-design-vue'
+import { PanelLeftClose, MessageSquarePlus, LoaderCircle } from 'lucide-vue-next'
+import dayjs, { parseToShanghai } from '@/utils/time'
+import { useChatUIStore } from '@/stores/chatUI'
+import { useInfoStore } from '@/stores/info'
+import { storeToRefs } from 'pinia'
 
-dayjs.extend(relativeTime);
-dayjs.extend(utc);
-dayjs.extend(timezone);
-dayjs.locale('zh-cn');
+// 使用 chatUI store
+const chatUIStore = useChatUIStore()
+const infoStore = useInfoStore()
+
+const { branding } = storeToRefs(infoStore)
 
 const props = defineProps({
   currentAgentId: {
@@ -92,10 +104,6 @@ const props = defineProps({
     type: Array,
     default: () => []
   },
-  isSidebarOpen: {
-    type: Boolean,
-    default: false
-  },
   isInitialRender: {
     type: Boolean,
     default: false
@@ -105,139 +113,161 @@ const props = defineProps({
     default: true
   },
   agents: {
-    type: Object,
-    default: () => ({})
+    type: Array,
+    default: () => []
   },
   selectedAgentId: {
     type: String,
     default: null
   }
-});
+})
 
-const emit = defineEmits(['create-chat', 'select-chat', 'delete-chat', 'rename-chat', 'toggle-sidebar', 'open-agent-modal']);
-
-const loading = ref(false);
-
-const selectedAgentName = computed(() => {
-  if (props.selectedAgentId && props.agents && props.agents[props.selectedAgentId]) {
-    return props.agents[props.selectedAgentId].name;
-  }
-  return '';
-});
+const emit = defineEmits([
+  'create-chat',
+  'select-chat',
+  'delete-chat',
+  'rename-chat',
+  'toggle-sidebar',
+  'open-agent-modal'
+])
 
 const groupedChats = computed(() => {
   const groups = {
-    '今天': [],
-    '七天内': [],
-    '三十天内': [],
-  };
+    今天: [],
+    七天内: [],
+    三十天内: []
+  }
 
   // 确保使用北京时间进行比较
-  const now = dayjs().tz('Asia/Shanghai');
-  const today = now.startOf('day');
-  const sevenDaysAgo = now.subtract(7, 'day').startOf('day');
-  const thirtyDaysAgo = now.subtract(30, 'day').startOf('day');
+  const now = dayjs().tz('Asia/Shanghai')
+  const today = now.startOf('day')
+  const sevenDaysAgo = now.subtract(7, 'day').startOf('day')
+  const thirtyDaysAgo = now.subtract(30, 'day').startOf('day')
 
   // Sort chats by creation date, newest first
   const sortedChats = [...props.chatsList].sort((a, b) => {
-    // 将后端时间当作UTC时间处理，然后转换为北京时间进行比较
-    const dateA = dayjs.utc(b.created_at).tz('Asia/Shanghai');
-    const dateB = dayjs.utc(a.created_at).tz('Asia/Shanghai');
-    return dateA.diff(dateB);
-  });
+    const dateA = parseToShanghai(b.created_at)
+    const dateB = parseToShanghai(a.created_at)
+    if (!dateA || !dateB) return 0
+    return dateA.diff(dateB)
+  })
 
-  sortedChats.forEach(chat => {
+  sortedChats.forEach((chat) => {
     // 将后端时间当作UTC时间处理，然后转换为北京时间
-    const chatDate = dayjs.utc(chat.created_at).tz('Asia/Shanghai');
-    if (chatDate.isAfter(today)) {
-      groups['今天'].push(chat);
-    } else if (chatDate.isAfter(sevenDaysAgo)) {
-      groups['七天内'].push(chat);
-    } else if (chatDate.isAfter(thirtyDaysAgo)) {
-      groups['三十天内'].push(chat);
-    } else {
-      const monthKey = chatDate.format('YYYY-MM');
-      if (!groups[monthKey]) {
-        groups[monthKey] = [];
-      }
-      groups[monthKey].push(chat);
+    const chatDate = parseToShanghai(chat.created_at)
+    if (!chatDate) {
+      return
     }
-  });
+    if (chatDate.isAfter(today)) {
+      groups['今天'].push(chat)
+    } else if (chatDate.isAfter(sevenDaysAgo)) {
+      groups['七天内'].push(chat)
+    } else if (chatDate.isAfter(thirtyDaysAgo)) {
+      groups['三十天内'].push(chat)
+    } else {
+      const monthKey = chatDate.format('YYYY-MM')
+      if (!groups[monthKey]) {
+        groups[monthKey] = []
+      }
+      groups[monthKey].push(chat)
+    }
+  })
 
   // Remove empty groups
   for (const key in groups) {
     if (groups[key].length === 0) {
-      delete groups[key];
+      delete groups[key]
     }
   }
 
-  return groups;
-});
-
+  return groups
+})
 
 const createNewChat = () => {
-  emit('create-chat');
-};
+  emit('create-chat')
+}
 
 const selectChat = (chat) => {
-  console.log(chat);
-  emit('select-chat', chat.id);
-};
+  emit('select-chat', chat.id)
+}
 
 const deleteChat = (chatId) => {
-  emit('delete-chat', chatId);
-};
+  emit('delete-chat', chatId)
+}
 
 const renameChat = async (chatId) => {
   try {
-    const chat = props.chatsList.find(c => c.id === chatId);
-    if (!chat) return;
+    const chat = props.chatsList.find((c) => c.id === chatId)
+    if (!chat) return
 
-    let newTitle = chat.title;
+    let newTitle = chat.title
     Modal.confirm({
       title: '重命名对话',
       content: h('div', { style: { marginTop: '12px' } }, [
         h('input', {
           value: newTitle,
-          style: { width: '100%', padding: '4px 8px', border: '1px solid #d9d9d9', borderRadius: '4px' },
-          onInput: (e) => { newTitle = e.target.value; }
+          style: {
+            width: '100%',
+            padding: '4px 8px',
+            border: '1px solid var(--gray-150)',
+            background: 'var(--gray-0)',
+            borderRadius: '4px'
+          },
+          onInput: (e) => {
+            newTitle = e.target.value
+          }
         })
       ]),
       okText: '确认',
       cancelText: '取消',
       onOk: () => {
         if (!newTitle.trim()) {
-          message.warning('标题不能为空');
-          return Promise.reject();
+          message.warning('标题不能为空')
+          return Promise.reject()
         }
-        emit('rename-chat', { chatId, title: newTitle });
+        emit('rename-chat', { chatId, title: newTitle })
       },
       onCancel: () => {}
-    });
+    })
   } catch (error) {
-    console.error('重命名对话失败:', error);
+    console.error('重命名对话失败:', error)
   }
-};
+}
 
 const toggleCollapse = () => {
-  emit('toggle-sidebar');
-};
-
-const openAgentModal = () => {
-  emit('open-agent-modal');
-};
+  emit('toggle-sidebar')
+}
 </script>
 
 <style lang="less" scoped>
 .chat-sidebar {
   width: 0;
   height: 100%;
-  background-color: var(--bg-sider);
+  background-color: var(--gray-0);
   transition: all 0.3s ease;
   display: flex;
   flex-direction: column;
   border: none;
   overflow: hidden;
+
+  .sidebar-content {
+    // 保持内部宽度，避免折叠时压缩
+    width: 280px;
+    min-width: 280px;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    opacity: 1;
+    transform: translateX(0);
+    transition:
+      opacity 0.2s ease,
+      transform 0.3s ease;
+  }
+
+  &:not(.sidebar-open) .sidebar-content {
+    opacity: 0;
+    transform: translateX(-12px);
+  }
 
   &.no-transition {
     transition: none !important;
@@ -259,7 +289,7 @@ const openAgentModal = () => {
     flex-shrink: 0;
 
     .header-title {
-      font-weight: 500;
+      font-weight: 600;
       font-size: 16px;
       color: var(--gray-900);
       white-space: nowrap;
@@ -283,10 +313,10 @@ const openAgentModal = () => {
     .new-chat-btn {
       width: 100%;
       padding: 8px 12px;
-      border-radius: 6px;
-      background-color: var(--gray-50);
+      border-radius: 8px;
+      background-color: var(--gray-0);
       color: var(--main-color);
-      border: none;
+      border: 1px solid var(--gray-150);
       transition: all 0.2s ease;
       font-weight: 500;
       cursor: pointer;
@@ -294,10 +324,29 @@ const openAgentModal = () => {
       align-items: center;
       justify-content: center;
       gap: 8px;
+      box-shadow: 0 3px 4px rgba(0, 10, 20, 0.02);
 
-      &:hover {
-        background-color: var(--gray-100);
+      &:hover:not(:disabled) {
+        box-shadow: 0 3px 4px rgba(0, 10, 20, 0.07);
       }
+
+      &:disabled {
+        cursor: not-allowed;
+        opacity: 0.7;
+      }
+
+      .loading-icon {
+        animation: spin 1s linear infinite;
+      }
+    }
+  }
+
+  @keyframes spin {
+    from {
+      transform: rotate(0deg);
+    }
+    to {
+      transform: rotate(360deg);
     }
   }
 
@@ -364,6 +413,7 @@ const openAgentModal = () => {
         .more-btn {
           color: var(--gray-600);
           background-color: transparent !important;
+          padding: 0;
           &:hover {
             color: var(--main-500);
             background-color: transparent !important;
@@ -375,10 +425,11 @@ const openAgentModal = () => {
         background-color: var(--gray-25);
 
         .actions-mask {
-            background: linear-gradient(to right, transparent, var(--gray-25) 20px);
+          background: linear-gradient(to right, transparent, var(--gray-25) 20px);
         }
 
-        .actions-mask, .conversation-actions {
+        .actions-mask,
+        .conversation-actions {
           opacity: 1;
         }
       }
@@ -436,19 +487,6 @@ const openAgentModal = () => {
 
   &:hover svg {
     stroke: var(--main-color);
-  }
-}
-
-// 智能体选择器样式
-.agent-selector {
-  cursor: pointer;
-  font-size: 15px;
-  color: var(--gray-900);
-  transition: color 0.2s ease;
-  font-weight: 500;
-
-  &:hover {
-    color: var(--main-500);
   }
 }
 </style>

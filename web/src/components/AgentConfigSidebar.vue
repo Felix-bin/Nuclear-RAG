@@ -1,18 +1,12 @@
 <template>
-  <div class="agent-config-sidebar" :class="{ 'open': isOpen }">
+  <div class="agent-config-sidebar" :class="{ open: isOpen }">
     <!-- 侧边栏头部 -->
     <div class="sidebar-header">
-      <div class="sidebar-title">
-        <SettingOutlined class="title-icon" />
-        <span>{{ selectedAgent?.name || '未选择智能体' }} 配置</span>
+      <div class="header-center">
+        <a-segmented v-model:value="activeTab" :options="segmentedOptions" />
       </div>
-      <a-button
-        type="text"
-        size="small"
-        @click="closeSidebar"
-        class="close-btn"
-      >
-        <CloseOutlined />
+      <a-button type="text" size="small" @click="closeSidebar" class="close-btn">
+        <X :size="16" />
       </a-button>
     </div>
 
@@ -23,7 +17,7 @@
           <p class="agent-description">{{ selectedAgent.description }}</p>
         </div>
 
-        <a-divider />
+        <!-- <a-divider /> -->
 
         <div v-if="selectedAgentId && configurableItems" class="config-form-content">
           <!-- 配置表单 -->
@@ -46,6 +40,7 @@
             <!-- 统一显示所有配置项 -->
             <template v-for="(value, key) in configurableItems" :key="key">
               <a-form-item
+                v-if="shouldShowConfig(key, value)"
                 :label="getConfigLabel(key, value)"
                 :name="key"
                 class="config-item"
@@ -56,14 +51,16 @@
                 <!-- 模型选择 -->
                 <div v-if="value.template_metadata.kind === 'llm'" class="model-selector">
                   <ModelSelectorComponent
-                    @select-model="handleModelChange"
-                    :model_name="agentConfig[key] ? agentConfig[key].split('/').slice(1).join('/') : ''"
-                    :model_provider="agentConfig[key] ? agentConfig[key].split('/')[0] : ''"
+                    @select-model="(spec) => handleModelChange(key, spec)"
+                    :model_spec="agentConfig[key] || ''"
                   />
                 </div>
 
                 <!-- 系统提示词 -->
-                <div v-else-if="key === 'system_prompt'" class="system-prompt-container">
+                <div
+                  v-else-if="value.template_metadata.kind === 'prompt'"
+                  class="system-prompt-container"
+                >
                   <!-- 编辑模式 -->
                   <a-textarea
                     v-if="systemPromptEditMode"
@@ -76,11 +73,7 @@
                     ref="systemPromptTextarea"
                   />
                   <!-- 显示模式 -->
-                  <div
-                    v-else
-                    class="system-prompt-display"
-                    @click="enterEditMode"
-                  >
+                  <div v-else class="system-prompt-display" @click="enterEditMode">
                     <div
                       class="system-prompt-content"
                       :class="{ 'is-placeholder': !agentConfig[key] }"
@@ -92,7 +85,7 @@
                 </div>
 
                 <!-- 工具选择 -->
-                <div v-else-if="value.template_metadata.kind === 'tools'" class="tools-selector">
+                <!-- <div v-else-if="value.template_metadata.kind === 'tools'" class="tools-selector">
                   <div class="tools-summary">
                     <div class="tools-summary-info">
                       <span class="tools-count">已选择 {{ getSelectedCount(key) }} 个工具</span>
@@ -126,7 +119,7 @@
                       {{ getToolNameById(toolId) }}
                     </a-tag>
                   </div>
-                </div>
+                </div> -->
 
                 <!-- 布尔类型 -->
                 <a-switch
@@ -137,7 +130,9 @@
 
                 <!-- 单选 -->
                 <a-select
-                  v-else-if="value?.options && (value?.type === 'str' || value?.type === 'select')"
+                  v-else-if="
+                    value?.options.length > 0 && (value?.type === 'str' || value?.type === 'select')
+                  "
                   :value="agentConfig[key]"
                   @update:value="(val) => agentStore.updateAgentConfig({ [key]: val })"
                   class="config-select"
@@ -147,37 +142,87 @@
                   </a-select-option>
                 </a-select>
 
-                <!-- 多选 -->
-                <div v-else-if="value?.options && value?.type === 'list'" class="multi-select-cards">
-                  <div class="multi-select-label">
-                    <span>已选择 {{ getSelectedCount(key) }} 项</span>
-                    <a-button
-                      type="link"
-                      size="small"
-                      @click="clearSelection(key)"
-                      v-if="getSelectedCount(key) > 0"
-                    >
-                      清空
-                    </a-button>
-                  </div>
-                  <div class="options-grid">
-                    <div
-                      v-for="option in value.options"
-                      :key="option"
-                      class="option-card"
-                      :class="{
-                        'selected': isOptionSelected(key, option),
-                        'unselected': !isOptionSelected(key, option)
-                      }"
-                      @click="toggleOption(key, option)"
-                    >
-                      <div class="option-content">
-                        <span class="option-text">{{ option }}</span>
-                        <div class="option-indicator">
-                          <CheckCircleOutlined v-if="isOptionSelected(key, option)" />
-                          <PlusCircleOutlined v-else />
+                <!-- 多选 / 工具列表 (统一处理) -->
+                <div v-else-if="isListConfig(key, value)" class="list-config-container">
+                  <!-- Case 1: <= 5 options, inline list -->
+                  <div v-if="getConfigOptions(value).length <= 5" class="multi-select-cards">
+                    <div class="multi-select-label">
+                      <span>已选择 {{ getSelectedCount(key) }} 项</span>
+                      <a-button
+                        type="link"
+                        size="small"
+                        class="clear-btn"
+                        @click="clearSelection(key)"
+                        v-if="getSelectedCount(key) > 0"
+                      >
+                        清空
+                      </a-button>
+                    </div>
+                    <div class="options-grid">
+                      <div
+                        v-for="option in getConfigOptions(value)"
+                        :key="getOptionValue(option)"
+                        class="option-card"
+                        :class="{
+                          selected: isOptionSelected(key, getOptionValue(option)),
+                          unselected: !isOptionSelected(key, getOptionValue(option))
+                        }"
+                        @click="toggleOption(key, getOptionValue(option))"
+                      >
+                        <div class="option-content">
+                          <span class="option-text">{{ getOptionLabel(option) }}</span>
+                          <div class="option-indicator">
+                            <Check
+                              v-if="isOptionSelected(key, getOptionValue(option))"
+                              :size="16"
+                            />
+                            <Plus v-else :size="16" />
+                          </div>
                         </div>
                       </div>
+                    </div>
+                  </div>
+
+                  <!-- Case 2: > 5 options, Modal trigger -->
+
+                  <div v-else class="selection-container">
+                    <div class="selection-summary">
+                      <div class="selection-summary-info">
+                        <span class="selection-count">已选择 {{ getSelectedCount(key) }} 项</span>
+
+                        <a-button
+                          type="link"
+                          size="small"
+                          class="clear-btn"
+                          @click="clearSelection(key)"
+                          v-if="getSelectedCount(key) > 0"
+                        >
+                          清空
+                        </a-button>
+                      </div>
+
+                      <a-button
+                        type="primary"
+                        size="small"
+                        class="selection-trigger-btn"
+                        @click="openSelectionModal(key)"
+                      >
+                        选择...
+                      </a-button>
+                    </div>
+
+                    <!-- Selected Preview Tags -->
+
+                    <div v-if="getSelectedCount(key) > 0" class="selection-preview">
+                      <a-tag
+                        v-for="val in agentConfig[key]"
+                        :key="val"
+                        closable
+                        @close="toggleOption(key, val)"
+                        class="selection-tag"
+                      >
+                        {{ getOptionLabelFromValue(key, val) }}
+                      </a-tag>
                     </div>
                   </div>
                 </div>
@@ -212,121 +257,106 @@
                 />
               </a-form-item>
             </template>
-
           </a-form>
-        </div>
-      </div>
-
-      <!-- 固定在底部的操作按钮 -->
-      <div class="sidebar-footer" v-if="!isEmptyConfig">
-        <div class="form-actions">
-          <a-button @click="saveConfig" class="save-btn" :class="{'changed': agentStore.hasConfigChanges}">
-            保存配置
-          </a-button>
-          <!-- TODO：BUG 目前有 bug 暂时不展示 -->
-          <!-- <a-button @click="resetConfig" class="reset-btn">
-            重置
-          </a-button> -->
         </div>
       </div>
     </div>
 
-    <!-- 工具选择弹窗 -->
+    <!-- 固定在底部的操作按钮 -->
+    <div class="sidebar-footer" v-if="!isEmptyConfig && userStore.isAdmin">
+      <div class="form-actions">
+        <a-button
+          type="primary"
+          @click="saveConfig"
+          class="save-btn"
+          :class="{ changed: agentStore.hasConfigChanges }"
+          :disabled="isSavingConfig"
+        >
+          保存
+        </a-button>
+
+        <a-tooltip :title="isCurrentDefault ? '当前已是默认配置' : '设为默认配置'">
+          <a-button type="text" shape="circle" class="icon-btn" @click="setAsDefault">
+            <Star
+              :size="18"
+              :fill="isCurrentDefault ? 'currentColor' : 'none'"
+              :class="{ 'is-default': isCurrentDefault }"
+            />
+          </a-button>
+        </a-tooltip>
+
+        <a-tooltip title="删除配置">
+          <a-button
+            type="text"
+            shape="circle"
+            danger
+            class="icon-btn"
+            @click="confirmDeleteConfig"
+            :disabled="isDeletingConfig"
+          >
+            <Trash2 :size="18" />
+          </a-button>
+        </a-tooltip>
+      </div>
+    </div>
+
+    <!-- 通用选择弹窗 -->
+
     <a-modal
-      v-model:open="toolsModalOpen"
-      title="选择工具"
-      :width="600"
+      v-model:open="selectionModalOpen"
+      :title="`选择${configurableItems[currentConfigKey]?.name || '项目'}`"
+      :width="800"
       :footer="null"
       :maskClosable="false"
-      class="tools-modal"
+      class="selection-modal"
     >
-      <div class="tools-modal-content">
-        <div class="tools-search">
+      <div class="selection-modal-content">
+        <div class="selection-search">
           <a-input
-            v-model:value="toolsSearchText"
-            placeholder="搜索工具..."
+            v-model:value="selectionSearchText"
+            placeholder="搜索..."
             allow-clear
             class="search-input"
           >
             <template #prefix>
-              <SearchOutlined class="search-icon" />
+              <Search :size="16" class="search-icon" />
             </template>
           </a-input>
         </div>
 
-        <div class="tools-list">
-          <!-- 知识库工具分组 -->
-          <div v-if="filteredTools.knowledgeBase && filteredTools.knowledgeBase.length > 0" class="tool-category">
-            <div class="category-header">
-              <DatabaseOutlined class="category-icon" />
-              <span class="category-title">知识库</span>
-              <span class="category-count">{{ filteredTools.knowledgeBase.length }}</span>
-            </div>
-            <div class="category-items">
-              <div
-                v-for="tool in filteredTools.knowledgeBase"
-                :key="tool.id"
-                class="tool-item"
-                :class="{ 'selected': selectedTools.includes(tool.id) }"
-                @click="toggleToolSelection(tool.id)"
-              >
-                <div class="tool-content">
-                  <div class="tool-header">
-                    <span class="tool-name">{{ tool.name }}</span>
-                    <div class="tool-indicator">
-                      <CheckCircleOutlined v-if="selectedTools.includes(tool.id)" />
-                      <PlusCircleOutlined v-else />
-                    </div>
-                  </div>
-                  <div class="tool-description">{{ tool.description }}</div>
+        <div class="selection-list">
+          <div
+            v-for="option in filteredOptions"
+            :key="getOptionValue(option)"
+            class="selection-item"
+            :class="{ selected: tempSelectedValues.includes(getOptionValue(option)) }"
+            @click="toggleModalSelection(getOptionValue(option))"
+          >
+            <div class="selection-item-content">
+              <div class="selection-item-header">
+                <span class="selection-item-name">{{ getOptionLabel(option) }}</span>
+
+                <div class="selection-item-indicator">
+                  <Check v-if="tempSelectedValues.includes(getOptionValue(option))" :size="16" />
+
+                  <Plus v-else :size="16" />
                 </div>
               </div>
-            </div>
-          </div>
 
-          <!-- 其他工具分组 -->
-          <div v-if="filteredTools.other && filteredTools.other.length > 0" class="tool-category">
-            <div class="category-header">
-              <ToolOutlined class="category-icon" />
-              <span class="category-title">其他工具</span>
-              <span class="category-count">{{ filteredTools.other.length }}</span>
-            </div>
-            <div class="category-items">
-              <div
-                v-for="tool in filteredTools.other"
-                :key="tool.id"
-                class="tool-item"
-                :class="{ 'selected': selectedTools.includes(tool.id) }"
-                @click="toggleToolSelection(tool.id)"
-              >
-                <div class="tool-content">
-                  <div class="tool-header">
-                    <span class="tool-name">{{ tool.name }}</span>
-                    <div class="tool-indicator">
-                      <CheckCircleOutlined v-if="selectedTools.includes(tool.id)" />
-                      <PlusCircleOutlined v-else />
-                    </div>
-                  </div>
-                  <div class="tool-description">{{ tool.description }}</div>
-                </div>
+              <div v-if="getOptionDescription(option)" class="selection-item-description">
+                {{ getOptionDescription(option) }}
               </div>
             </div>
-          </div>
-
-          <!-- 无结果提示 -->
-          <div v-if="filteredTools.all.length === 0" class="no-tools">
-            <SearchOutlined style="font-size: 32px; color: var(--gray-400); margin-bottom: 8px;" />
-            <p>未找到匹配的工具</p>
           </div>
         </div>
 
-        <div class="tools-modal-footer">
-          <div class="selected-count">
-            已选择 {{ selectedTools.length }} 个工具
-          </div>
+        <div class="selection-modal-footer">
+          <div class="selected-count">已选择 {{ tempSelectedValues.length }} 项</div>
+
           <div class="modal-actions">
-            <a-button @click="cancelToolsSelection">取消</a-button>
-            <a-button type="primary" @click="confirmToolsSelection">确认</a-button>
+            <a-button @click="closeSelectionModal">取消</a-button>
+
+            <a-button type="primary" @click="confirmSelection">确认</a-button>
           </div>
         </div>
       </div>
@@ -335,331 +365,430 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, nextTick } from 'vue';
-import {
-  SettingOutlined,
-  CloseOutlined,
-  CheckCircleOutlined,
-  PlusCircleOutlined,
-  SearchOutlined,
-  DatabaseOutlined,
-  ToolOutlined
-} from '@ant-design/icons-vue';
-import { message } from 'ant-design-vue';
-import ModelSelectorComponent from '@/components/ModelSelectorComponent.vue';
-import { useAgentStore } from '@/stores/agent';
-import { storeToRefs } from 'pinia';
+import { ref, computed, nextTick, watch } from 'vue'
+import { message, Modal } from 'ant-design-vue'
+import { X, Trash2, Check, Plus, Search, Star } from 'lucide-vue-next'
+import ModelSelectorComponent from '@/components/ModelSelectorComponent.vue'
+import { useAgentStore } from '@/stores/agent'
+import { useUserStore } from '@/stores/user'
+import { useDatabaseStore } from '@/stores/database'
+import { storeToRefs } from 'pinia'
 
 // Props
 const props = defineProps({
   isOpen: {
     type: Boolean,
     default: false
+  },
+  disabled: {
+    type: Boolean,
+    default: false
   }
-});
+})
 
 // Emits
-const emit = defineEmits([
-  'close'
-]);
+const emit = defineEmits(['close'])
 
 // Store 管理
-const agentStore = useAgentStore();
+const agentStore = useAgentStore()
+const userStore = useUserStore()
+const databaseStore = useDatabaseStore()
+
+watch(
+  () => props.isOpen,
+  (val) => {
+    if (val) {
+      databaseStore.loadDatabases().catch(() => {})
+    }
+  }
+)
+
 const {
   availableTools,
   selectedAgent,
   selectedAgentId,
+  selectedAgentConfigId,
+  selectedConfigSummary,
+  agentConfigs,
   agentConfig,
   configurableItems
-} = storeToRefs(agentStore);
+} = storeToRefs(agentStore)
 
 // console.log(availableTools.value)
 
 // 本地状态
-const toolsModalOpen = ref(false);
-const selectedTools = ref([]);
-const toolsSearchText = ref('');
-const systemPromptEditMode = ref(false);
-
+const selectionModalOpen = ref(false)
+const currentConfigKey = ref(null)
+const tempSelectedValues = ref([])
+const selectionSearchText = ref('')
+const systemPromptEditMode = ref(false)
+const activeTab = ref('basic')
 
 const isEmptyConfig = computed(() => {
-  return !selectedAgentId.value || Object.keys(configurableItems.value).length === 0;
-});
+  return !selectedAgentId.value || Object.keys(configurableItems.value).length === 0
+})
 
-// 将工具分类：知识库工具和其他工具
-const categorizedTools = computed(() => {
-  const toolsList = availableTools.value ? Object.values(availableTools.value) : [];
-  
-  const knowledgeBaseTools = [];
-  const otherTools = [];
-  
-  toolsList.forEach(tool => {
-    // 检查是否是知识库工具（通过 metadata.tag 判断）
-    const isKnowledgeBase = tool.metadata?.tag?.includes('knowledgebase');
-    if (isKnowledgeBase) {
-      knowledgeBaseTools.push(tool);
-    } else {
-      otherTools.push(tool);
-    }
-  });
-  
-  return {
-    knowledgeBase: knowledgeBaseTools,
-    other: otherTools,
-    all: toolsList
-  };
-});
+const isCurrentDefault = computed(() => {
+  return !!selectedConfigSummary.value?.is_default
+})
 
-const filteredTools = computed(() => {
-  const { knowledgeBase, other } = categorizedTools.value;
-  const allTools = [...knowledgeBase, ...other];
-  
-  if (!toolsSearchText.value) {
-    return {
-      knowledgeBase,
-      other,
-      all: allTools
-    };
+const isSavingConfig = ref(false)
+const isDeletingConfig = ref(false)
+
+const hasOtherConfigs = computed(() => {
+  if (isEmptyConfig.value) return false
+  return Object.entries(configurableItems.value).some(([, value]) => {
+    const isBasic =
+      value.template_metadata?.kind === 'prompt' || value.template_metadata?.kind === 'llm'
+    const isTools =
+      value.template_metadata?.kind === 'mcps' ||
+      value.template_metadata?.kind === 'knowledges' ||
+      value.template_metadata?.kind === 'tools'
+
+    return !isBasic && !isTools
+  })
+})
+
+const segmentedOptions = computed(() => {
+  const options = [
+    { label: '基础', value: 'basic' },
+    { label: '工具', value: 'tools' }
+  ]
+
+  if (hasOtherConfigs.value) {
+    options.push({ label: '其他', value: 'other' })
   }
-  
-  const searchLower = toolsSearchText.value.toLowerCase();
-  const filterFn = tool =>
-    tool.name.toLowerCase().includes(searchLower) ||
-    tool.description.toLowerCase().includes(searchLower);
-  
-  return {
-    knowledgeBase: knowledgeBase.filter(filterFn),
-    other: other.filter(filterFn),
-    all: allTools.filter(filterFn)
-  };
-});
+
+  return options
+})
+
+// 通用选项获取与处理
+const getConfigOptions = (value) => {
+  if (value?.template_metadata?.kind === 'tools') {
+    return availableTools.value ? Object.values(availableTools.value) : []
+  }
+  if (value?.template_metadata?.kind === 'knowledges') {
+    return databaseStore.databases || []
+  }
+  return value?.options || []
+}
+
+const isListConfig = (key, value) => {
+  const isTools = value?.template_metadata?.kind === 'tools'
+  const isList = value?.type === 'list'
+  return isTools || isList
+}
+
+const getOptionValue = (option) => {
+  if (typeof option === 'object' && option !== null) {
+    return option.id || option.value || option.name
+  }
+  return option
+}
+
+const getOptionLabel = (option) => {
+  if (typeof option === 'object' && option !== null) {
+    return option.name || option.label || option.id
+  }
+  return option
+}
+
+const getOptionDescription = (option) => {
+  if (typeof option === 'object' && option !== null) {
+    return option.description || '暂无描述'
+  }
+  return null
+}
+
+const filteredOptions = computed(() => {
+  if (!currentConfigKey.value) return []
+  const key = currentConfigKey.value
+  const configItem = configurableItems.value[key]
+  const options = getConfigOptions(configItem)
+
+  if (!selectionSearchText.value) return options
+
+  const search = selectionSearchText.value.toLowerCase()
+  return options.filter((opt) => {
+    const label = String(getOptionLabel(opt)).toLowerCase()
+    const desc = String(getOptionDescription(opt) || '').toLowerCase()
+    return label.includes(search) || desc.includes(search)
+  })
+})
 
 // 方法
+const shouldShowConfig = (key, value) => {
+  const isBasic =
+    value.template_metadata?.kind === 'prompt' || value.template_metadata?.kind === 'llm'
+  const isTools =
+    value.template_metadata?.kind === 'mcps' ||
+    value.template_metadata?.kind === 'knowledges' ||
+    value.template_metadata?.kind === 'tools'
+
+  if (activeTab.value === 'basic') {
+    // 基础：System Prompt, LLM Model
+    return isBasic
+  } else if (activeTab.value === 'tools') {
+    // 工具：Tools, MCPs, Knowledges
+    return isTools
+  } else {
+    // 其他：剩余所有配置
+    return !isBasic && !isTools
+  }
+}
+
 const closeSidebar = () => {
-  emit('close');
-};
+  emit('close')
+}
 
 const getConfigLabel = (key, value) => {
   // console.log(configurableItems)
   if (value.description && value.name !== key) {
-    return `${value.name}（${key}）`;
+    return `${value.name}`
+    // return `${value.name}（${key}）`;
   }
-  return key;
-};
+  return key
+}
 
 const getPlaceholder = (key, value) => {
-  return `（默认: ${value.default}）`;
-};
+  return `（默认: ${value.default}）`
+}
 
-const handleModelChange = (data) => {
+const handleModelChange = (key, spec) => {
+  if (typeof spec !== 'string' || !spec) return
   agentStore.updateAgentConfig({
-    model: `${data.provider}/${data.name}`
-  });
-};
+    [key]: spec
+  })
+}
 
 // 多选相关方法
 const ensureArray = (key) => {
-  const config = agentConfig.value || {};
+  const config = agentConfig.value || {}
   if (!config[key] || !Array.isArray(config[key])) {
-    return [];
+    return []
   }
-  return config[key];
-};
+  return config[key]
+}
 
 const isOptionSelected = (key, option) => {
-  const currentOptions = ensureArray(key);
-  return currentOptions.includes(option);
-};
+  const currentOptions = ensureArray(key)
+  return currentOptions.includes(option)
+}
 
 const getSelectedCount = (key) => {
-  const currentOptions = ensureArray(key);
-  return currentOptions.length;
-};
+  const currentOptions = ensureArray(key)
+  return currentOptions.length
+}
 
 const toggleOption = (key, option) => {
-  const currentOptions = [...ensureArray(key)];
-  const index = currentOptions.indexOf(option);
+  const currentOptions = [...ensureArray(key)]
+  const index = currentOptions.indexOf(option)
 
   if (index > -1) {
-    currentOptions.splice(index, 1);
+    currentOptions.splice(index, 1)
   } else {
-    currentOptions.push(option);
+    currentOptions.push(option)
   }
 
   agentStore.updateAgentConfig({
     [key]: currentOptions
-  });
-};
+  })
+}
 
 const clearSelection = (key) => {
   agentStore.updateAgentConfig({
     [key]: []
-  });
-};
+  })
+}
 
-// 工具相关方法
-const getToolNameById = (toolId) => {
-  const toolsList = availableTools.value ? Object.values(availableTools.value) : [];
-  const tool = toolsList.find(t => t.id === toolId);
-  return tool ? tool.name : toolId;
-};
+// 统一选择弹窗相关方法
+const getOptionLabelFromValue = (key, val) => {
+  const options = getConfigOptions(configurableItems.value[key])
+  const option = options.find((opt) => getOptionValue(opt) === val)
+  return option ? getOptionLabel(option) : val
+}
 
-const loadAvailableTools = async () => {
-  try {
-    await agentStore.fetchTools();
-  } catch (error) {
-    console.error('加载工具列表失败:', error);
+const openSelectionModal = async (key) => {
+  currentConfigKey.value = key
+  // 如果是工具，可能需要刷新
+  if (configurableItems.value[key]?.template_metadata?.kind === 'tools' && selectedAgentId.value) {
+    try {
+      await agentStore.fetchAgentDetail(selectedAgentId.value, true)
+    } catch (error) {
+      console.error('刷新工具列表失败:', error)
+    }
   }
-};
-
-const openToolsModal = async () => {
-  try {
-    await loadAvailableTools();
-    selectedTools.value = [...(agentConfig.value?.tools || [])];
-    toolsModalOpen.value = true;
-  } catch (error) {
-    console.error('打开工具选择弹窗失败:', error);
-    message.error('打开工具选择弹窗失败');
+  // 如果是知识库，需要获取知识库列表
+  if (configurableItems.value[key]?.template_metadata?.kind === 'knowledges') {
+    try {
+      await databaseStore.loadDatabases()
+    } catch (error) {
+      console.error('加载知识库列表失败:', error)
+    }
   }
-};
+  const currentValues = agentConfig.value[key] || []
+  tempSelectedValues.value = [...currentValues]
+  selectionModalOpen.value = true
+}
 
-const toggleToolSelection = (toolId) => {
-  const index = selectedTools.value.indexOf(toolId);
+const toggleModalSelection = (optionValue) => {
+  const index = tempSelectedValues.value.indexOf(optionValue)
   if (index > -1) {
-    selectedTools.value.splice(index, 1);
+    tempSelectedValues.value.splice(index, 1)
   } else {
-    selectedTools.value.push(toolId);
+    tempSelectedValues.value.push(optionValue)
   }
-};
+}
 
-const removeSelectedTool = (toolId) => {
-  const currentTools = [...(agentConfig.value?.tools || [])];
-  const index = currentTools.indexOf(toolId);
-  if (index > -1) {
-    currentTools.splice(index, 1);
+const confirmSelection = () => {
+  if (currentConfigKey.value) {
     agentStore.updateAgentConfig({
-      tools: currentTools
-    });
+      [currentConfigKey.value]: [...tempSelectedValues.value]
+    })
   }
-};
+  closeSelectionModal()
+}
 
-const confirmToolsSelection = () => {
-  agentStore.updateAgentConfig({
-    tools: [...selectedTools.value]
-  });
-  toolsModalOpen.value = false;
-  toolsSearchText.value = '';
-};
-
-const cancelToolsSelection = () => {
-  toolsModalOpen.value = false;
-  toolsSearchText.value = '';
-  selectedTools.value = [];
-};
+const closeSelectionModal = () => {
+  selectionModalOpen.value = false
+  currentConfigKey.value = null
+  tempSelectedValues.value = []
+  selectionSearchText.value = ''
+}
 
 // 系统提示词编辑相关方法
 const enterEditMode = () => {
-  systemPromptEditMode.value = true;
+  systemPromptEditMode.value = true
   // 使用 nextTick 确保 DOM 更新后再聚焦
   nextTick(() => {
-    const textarea = document.querySelector('.system-prompt-input');
+    const textarea = document.querySelector('.system-prompt-input')
     if (textarea) {
-      textarea.focus();
+      textarea.focus()
     }
-  });
-};
+  })
+}
 
 // 验证和过滤配置项
 const validateAndFilterConfig = () => {
-  const validatedConfig = { ...agentConfig.value };
-  const configItems = configurableItems.value;
+  const validatedConfig = { ...agentConfig.value }
+  const configItems = configurableItems.value
 
   // 遍历所有配置项
-  Object.keys(configItems).forEach(key => {
-    const configItem = configItems[key];
-    const currentValue = validatedConfig[key];
+  Object.keys(configItems).forEach((key) => {
+    const configItem = configItems[key]
+    const currentValue = validatedConfig[key]
 
     // 检查工具配置
     if (configItem.template_metadata?.kind === 'tools' && Array.isArray(currentValue)) {
-      const availableToolIds = availableTools.value ? Object.values(availableTools.value).map(tool => tool.id) : [];
-      validatedConfig[key] = currentValue.filter(toolId => availableToolIds.includes(toolId));
+      const availableToolIds = availableTools.value
+        ? Object.values(availableTools.value).map((tool) => tool.id)
+        : []
+      validatedConfig[key] = currentValue.filter((toolId) => availableToolIds.includes(toolId))
 
       if (validatedConfig[key].length !== currentValue.length) {
-        console.warn(`工具配置 ${key} 中包含无效的工具ID，已自动过滤`);
+        console.warn(`工具配置 ${key} 中包含无效的工具ID，已自动过滤`)
       }
     }
 
     // 检查多选配置项 (type === 'list' 且有 options)
-    else if (configItem.type === 'list' && configItem.options && Array.isArray(currentValue)) {
-      const validOptions = configItem.options;
-      validatedConfig[key] = currentValue.filter(value => validOptions.includes(value));
+    else if (
+      configItem.type === 'list' &&
+      configItem.options.length > 0 &&
+      Array.isArray(currentValue)
+    ) {
+      const validOptions = configItem.options
+      validatedConfig[key] = currentValue.filter((value) => validOptions.includes(value))
 
       if (validatedConfig[key].length !== currentValue.length) {
-        console.warn(`配置项 ${key} 中包含无效的选项，已自动过滤`);
+        console.warn(`配置项 ${key} 中包含无效的选项，已自动过滤`)
       }
     }
-  });
+  })
 
-  return validatedConfig;
-};
+  return validatedConfig
+}
 
 // 配置保存和重置
 const saveConfig = async () => {
   if (!selectedAgentId.value) {
-    message.error('没有选择智能体');
-    return;
+    message.error('没有选择智能体')
+    return
   }
 
+  if (!agentStore.hasConfigChanges) return
+
   try {
+    isSavingConfig.value = true
     // 验证和过滤配置
-    const validatedConfig = validateAndFilterConfig();
+    const validatedConfig = validateAndFilterConfig()
 
     // 如果配置有变化，先更新到store
     if (JSON.stringify(validatedConfig) !== JSON.stringify(agentConfig.value)) {
-      agentStore.updateAgentConfig(validatedConfig);
-      message.info('检测到无效配置项，已自动过滤');
+      agentStore.updateAgentConfig(validatedConfig)
+      message.info('检测到无效配置项，已自动过滤')
     }
 
-    await agentStore.saveAgentConfig();
-    message.success('配置已保存到服务器');
+    await agentStore.saveAgentConfig()
+    message.success('配置已保存到服务器')
   } catch (error) {
-    console.error('保存配置到服务器出错:', error);
-    message.error('保存配置到服务器失败');
+    console.error('保存配置到服务器出错:', error)
+    message.error('保存配置到服务器失败')
+  } finally {
+    isSavingConfig.value = false
   }
-};
+}
 
-const resetConfig = async () => {
-  if (!selectedAgentId.value) {
-    message.error('没有选择智能体');
-    return;
-  }
-
+const setAsDefault = async () => {
+  if (!selectedAgentId.value || !selectedAgentConfigId.value) return
   try {
-    agentStore.resetAgentConfig();
-    message.info('配置已重置');
+    await agentStore.setSelectedAgentConfigDefault()
+    message.success('已设为默认配置')
   } catch (error) {
-    console.error('重置配置出错:', error);
-    message.error('重置配置失败');
+    console.error('设置默认配置出错:', error)
+    message.error('设置默认配置失败')
   }
-};
+}
 
-// 监听器
-watch(() => props.isOpen, (newVal) => {
-  if (newVal && (!availableTools.value || Object.keys(availableTools.value).length === 0)) {
-    loadAvailableTools();
-  }
-});
+const confirmDeleteConfig = async () => {
+  if (!selectedAgentId.value || !selectedAgentConfigId.value) return
+
+  const currentName = selectedConfigSummary.value?.name || '当前配置'
+  const list = agentConfigs.value[selectedAgentId.value] || []
+  const content =
+    list.length <= 1
+      ? `将删除「${currentName}」。删除后系统会自动创建一个新的默认配置。`
+      : `将删除「${currentName}」。`
+
+  Modal.confirm({
+    title: '确认删除配置？',
+    content,
+    okText: '删除',
+    okType: 'danger',
+    cancelText: '取消',
+    onOk: async () => {
+      isDeletingConfig.value = true
+      try {
+        await agentStore.deleteSelectedAgentConfigProfile()
+        message.success('配置已删除')
+      } catch (error) {
+        console.error('删除配置出错:', error)
+        message.error('删除配置失败')
+      } finally {
+        isDeletingConfig.value = false
+      }
+    }
+  })
+}
 </script>
 
 <style lang="less" scoped>
-
-@padding-bottom: 40px;
+@padding-bottom: 0px;
 .agent-config-sidebar {
   position: relative;
   width: 0;
   height: 100vh;
-  background: white;
-  border-left: 1px solid #e8e8e8;
+  background: var(--gray-0);
+  border-left: 1px solid var(--gray-200);
   transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   overflow: hidden;
   display: flex;
@@ -674,23 +803,17 @@ watch(() => props.isOpen, (newVal) => {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 10px 20px;
-    border-bottom: 1px solid var(--gray-200);
-    background: #fff;
+    padding: 0 20px;
+    border-bottom: 1px solid var(--gray-150);
+    background: var(--gray-0);
     flex-shrink: 0;
     min-width: 400px;
+    height: var(--header-height);
 
-    .sidebar-title {
+    .header-center {
+      flex: 1;
       display: flex;
-      align-items: center;
-      gap: 8px;
-      font-size: 15px;
-      font-weight: 600;
-      color: var(--gray-900);
-
-      .title-icon {
-        color: var(--main-color);
-      }
+      justify-content: center;
     }
 
     .close-btn {
@@ -714,7 +837,6 @@ watch(() => props.isOpen, (newVal) => {
 
     .agent-info {
       .agent-basic-info {
-
         .agent-description {
           margin: 0 0 12px 0;
           font-size: 14px;
@@ -724,62 +846,27 @@ watch(() => props.isOpen, (newVal) => {
       }
     }
 
-    .sidebar-footer {
-      position: sticky;
-      bottom: 16px;
-      padding: 12px 0;
-      border-top: 1px solid var(--gray-100);
-      background: #fff;
-      // min-width: 400px;
-      z-index: 10;
-
-      .form-actions {
-        display: flex;
-        gap: 12px;
-        justify-content: space-between;
-
-        .save-btn {
-          flex: 1;
-          background-color: var(--gray-100);
-          border: none;
-          border-radius: 6px;
-          font-weight: 500;
-          font-size: 14px;
-
-          &.changed {
-            background-color: var(--main-color);
-            color: #fff;
-          }
-
-          &:hover {
-            opacity: 0.9;
-          }
-        }
-
-        .reset-btn {
-          flex: 1;
-          border: 1px solid var(--gray-300);
-          border-radius: 6px;
-          color: var(--gray-700);
-          font-size: 14px;
-
-          &:hover {
-            border-color: var(--main-color);
-            color: var(--main-color);
-          }
-        }
-      }
-    }
-
     .config-form-content {
-      margin-bottom: 100px;
+      margin-bottom: 20px;
       .config-form {
         .config-alert {
           margin-bottom: 16px;
         }
 
         .config-item {
-          margin-bottom: 20px;
+          background-color: var(--gray-25);
+          padding: 12px;
+          border-radius: 8px;
+          border: 1px solid var(--gray-100);
+          // box-shadow: 0px 0px 2px var(--shadow-3);
+
+          :deep(.ant-form-item-label > label) {
+            font-weight: 600;
+          }
+
+          :deep(label.form_item_model) {
+            font-weight: 600;
+          }
 
           .config-description {
             margin: 4px 0 8px 0;
@@ -796,7 +883,8 @@ watch(() => props.isOpen, (newVal) => {
             resize: vertical;
             background: var(--gray-50);
             border: 1px solid var(--gray-200);
-            padding: 8px 12px;
+            padding: 6px 10px;
+            font-size: 12px;
 
             &:focus {
               outline: none;
@@ -809,10 +897,7 @@ watch(() => props.isOpen, (newVal) => {
 
           .system-prompt-display {
             min-height: 60px;
-            background: var(--gray-50);
-            border: 1px solid var(--gray-200);
             border-radius: 6px;
-            padding: 8px 12px;
             cursor: pointer;
             position: relative;
             transition: all 0.2s ease;
@@ -827,33 +912,34 @@ watch(() => props.isOpen, (newVal) => {
             }
 
             .system-prompt-content {
-               white-space: pre-wrap;
-               word-break: break-word;
-               line-height: 1.5;
-               color: var(--gray-900);
-               font-size: 14px;
-              //  min-height: 100px;
+              white-space: pre-wrap;
+              word-break: break-word;
+              line-height: 1.5;
+              color: var(--gray-900);
+              font-size: 12px;
+              max-height: 500px;
+              overflow: scroll;
 
-               &.is-placeholder {
-                 color: var(--gray-400);
-                 font-style: italic;
-               }
+              &.is-placeholder {
+                color: var(--gray-400);
+                font-style: italic;
+              }
 
-               &:empty::before {
-                 content: attr(data-placeholder);
-                 color: var(--gray-400);
-               }
-             }
+              &:empty::before {
+                content: attr(data-placeholder);
+                color: var(--gray-400);
+              }
+            }
 
             .edit-hint {
               position: absolute;
-              top: 8px;
-              right: 12px;
+              top: -32px;
+              right: 0px;
               font-size: 12px;
-              color: var(--gray-400);
+              color: var(--main-800);
               opacity: 0;
               transition: opacity 0.2s ease;
-              background: rgba(255, 255, 255, 0.9);
+              background: var(--gray-0);
               padding: 2px 6px;
               border-radius: 4px;
             }
@@ -872,41 +958,120 @@ watch(() => props.isOpen, (newVal) => {
       }
     }
   }
+
+  .sidebar-footer {
+    padding: 8px 12px;
+    border-top: 1px solid var(--gray-100);
+    background: var(--gray-0);
+    // min-width: 400px;
+    z-index: 10;
+    flex-shrink: 0; // Ensure footer doesn't shrink
+
+    .form-actions {
+      display: flex;
+      flex-direction: row;
+      gap: 12px;
+      justify-content: space-between;
+      align-items: center;
+
+      .icon-btn {
+        width: 36px;
+        height: 36px;
+        border-radius: 6px;
+        color: var(--gray-600);
+        border: 1px solid var(--gray-200);
+        background: var(--gray-0);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+
+        &:hover:not(:disabled) {
+          color: var(--main-600);
+          border-color: var(--main-200);
+          background: var(--main-10);
+        }
+
+        &.is-default {
+          // color: var(--main-500);
+          color: var(--color-warning-500);
+        }
+
+        &[danger]:hover:not(:disabled) {
+          color: var(--error-600);
+          border-color: var(--error-200);
+          background: var(--error-10);
+        }
+
+        &:disabled {
+          cursor: not-allowed;
+          background: transparent;
+          color: var(--gray-400);
+          border-color: var(--gray-200);
+
+          &.is-default {
+            opacity: 1;
+          }
+        }
+      }
+
+      .save-btn {
+        flex: 1;
+        height: 36px;
+        border-radius: 6px;
+        font-weight: 500;
+        font-size: 14px;
+        background-color: var(--gray-100);
+        border: 1px solid var(--gray-200);
+        color: var(--gray-600);
+        transition: all 0.2s ease;
+
+        &.changed {
+          background-color: var(--main-color);
+          color: var(--gray-0);
+          border-color: var(--main-color);
+        }
+
+        &:hover:not(:disabled) {
+          opacity: 0.9;
+        }
+
+        &:disabled {
+          cursor: not-allowed;
+          background-color: var(--gray-100);
+          border-color: var(--gray-200);
+          color: var(--gray-400);
+        }
+      }
+    }
+  }
 }
 
-
-// 工具选择器样式
-.tools-selector {
-  .tools-summary {
+// 选择器样式
+.selection-container {
+  .selection-summary {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 6px 12px;
-    background: var(--gray-20);
+    padding: 4px 10px;
+    background: var(--gray-0);
     border-radius: 8px;
-    border: 1px solid var(--gray-200);
+    border: 1px solid var(--gray-150);
     margin-bottom: 8px;
 
-    .tools-summary-info {
+    .selection-summary-info {
       display: flex;
       align-items: center;
       gap: 8px;
       font-size: 13px;
       color: var(--gray-900);
 
-      .tools-count {
+      .selection-count {
         color: var(--gray-900);
         font-weight: 500;
       }
-
-      .clear-btn {
-        padding: 0;
-        height: auto;
-        font-size: 12px;
-      }
     }
 
-    .select-tools-btn {
+    .selection-trigger-btn {
       background: var(--main-color);
       border: none;
       border-radius: 4px;
@@ -921,17 +1086,17 @@ watch(() => props.isOpen, (newVal) => {
     }
   }
 
-  .selected-tools-preview {
+  .selection-preview {
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
 
-    .tool-tag {
+    .selection-tag {
       margin: 0;
       padding: 4px 8px;
-      border-radius: 12px;
-      background: var(--gray-50);
-      border: 1px solid var(--gray-200);
+      border-radius: 8px;
+      background: var(--gray-150);
+      border: none;
       color: var(--gray-900);
       font-size: 12px;
 
@@ -966,11 +1131,11 @@ watch(() => props.isOpen, (newVal) => {
 
   .option-card {
     border: 1px solid var(--gray-300);
-    border-radius: 6px;
-    padding: 10px 12px;
+    border-radius: 8px;
+    padding: 8px 12px;
     cursor: pointer;
     transition: all 0.2s ease;
-    background: white;
+    background: var(--gray-0);
 
     &:hover {
       border-color: var(--main-color);
@@ -1015,39 +1180,17 @@ watch(() => props.isOpen, (newVal) => {
       .option-indicator {
         flex-shrink: 0;
         font-size: 14px;
+        display: flex;
+        align-items: center;
       }
     }
   }
 }
 
-// 工具选择弹窗样式
-.tools-modal {
-  :deep(.ant-modal-content) {
-    border-radius: 8px;
-    overflow: hidden;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-    border: 1px solid var(--gray-200);
-  }
-
-  :deep(.ant-modal-header) {
-    background: white;
-    border-bottom: 1px solid var(--gray-200);
-    padding: 16px 20px;
-
-    .ant-modal-title {
-      font-size: 16px;
-      font-weight: 600;
-      color: var(--gray-900);
-    }
-  }
-
-  :deep(.ant-modal-body) {
-    padding: 20px;
-    background: white;
-  }
-
-  .tools-modal-content {
-    .tools-search {
+// 选择弹窗样式
+.selection-modal {
+  .selection-modal-content {
+    .selection-search {
       margin-bottom: 16px;
 
       .search-input {
@@ -1056,7 +1199,7 @@ watch(() => props.isOpen, (newVal) => {
         height: 36px;
         font-size: 14px;
         transition: all 0.2s ease;
-        background: white;
+        background: var(--gray-0);
 
         .search-icon {
           color: var(--gray-500);
@@ -1078,16 +1221,19 @@ watch(() => props.isOpen, (newVal) => {
       }
     }
 
-    .tools-list {
-      display: flex;
-      flex-direction: column;
-      gap: 20px;
+    .selection-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
       max-height: max(60vh, 800px);
       overflow-y: auto;
       border-radius: 8px;
       margin-bottom: 16px;
-      background: white;
-      padding: 4px;
+
+      // 在小屏幕下调整为单列布局
+      @media (max-width: 480px) {
+        grid-template-columns: 1fr;
+      }
 
       &::-webkit-scrollbar {
         width: 6px;
@@ -1107,84 +1253,27 @@ watch(() => props.isOpen, (newVal) => {
         background: var(--gray-500);
       }
 
-      // 工具分类容器
-      .tool-category {
-        .category-header {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          padding: 8px 12px;
-          background: var(--gray-50);
-          border-radius: 6px;
-          margin-bottom: 12px;
-          border: 1px solid var(--gray-200);
-
-          .category-icon {
-            font-size: 16px;
-            color: var(--main-color);
-          }
-
-          .category-title {
-            flex: 1;
-            font-size: 14px;
-            font-weight: 600;
-            color: var(--gray-900);
-          }
-
-          .category-count {
-            font-size: 12px;
-            color: var(--gray-600);
-            background: var(--gray-100);
-            padding: 2px 8px;
-            border-radius: 10px;
-            font-weight: 500;
-          }
-        }
-
-        .category-items {
-          display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-          gap: 12px;
-        }
-      }
-
-      // 无结果提示
-      .no-tools {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        padding: 40px 20px;
-        color: var(--gray-500);
-
-        p {
-          margin: 0;
-          font-size: 14px;
-        }
-      }
-
-      .tool-item {
+      .selection-item {
         padding: 12px 16px;
         border-bottom: none;
         cursor: pointer;
         transition: all 0.2s ease;
         border-radius: 8px;
         margin-bottom: 4px;
-        background: white;
+        background: var(--gray-0);
         border: 1px solid var(--gray-200);
 
         &:hover {
           border-color: var(--gray-300);
           background: var(--gray-20);
         }
-        .tool-content {
-          .tool-header {
+        .selection-item-content {
+          .selection-item-header {
             display: flex;
             align-items: center;
-            margin-bottom: 6px;
             gap: 8px;
 
-            .tool-name {
+            .selection-item-name {
               font-size: 14px;
               font-weight: 500;
               color: var(--gray-900);
@@ -1192,21 +1281,23 @@ watch(() => props.isOpen, (newVal) => {
               flex: 1;
             }
 
-            .tool-indicator {
+            .selection-item-indicator {
               color: var(--gray-400);
               font-size: 16px;
               transition: all 0.2s ease;
               flex-shrink: 0;
+              display: flex;
+              align-items: center;
             }
           }
 
-          .tool-description {
+          .selection-item-description {
             font-size: 12px;
             color: var(--gray-600);
             line-height: 1.4;
+            margin-top: 6px;
             display: -webkit-box;
             -webkit-line-clamp: 2;
-            line-clamp: 2;
             -webkit-box-orient: vertical;
             overflow: hidden;
             text-overflow: ellipsis;
@@ -1214,27 +1305,25 @@ watch(() => props.isOpen, (newVal) => {
         }
 
         &.selected {
-          background: var(--main-30);
-          // border-color: var(--main-color);
+          background: var(--main-10);
+          border-color: var(--main-color);
 
-          .tool-content {
-            .tool-name {
-              color: var(--main-color);
+          .selection-item-content {
+            .selection-item-name {
+              color: var(--main-800);
             }
-            .tool-indicator {
-              color: var(--main-color);
+            .selection-item-indicator {
+              color: var(--main-800);
             }
           }
-          .tool-description {
-            color: var(--gray-700);
+          .selection-item-description {
+            color: var(--gray-900);
           }
-
         }
-
       }
     }
 
-    .tools-modal-footer {
+    .selection-modal-footer {
       display: flex;
       justify-content: space-between;
       align-items: center;
@@ -1266,7 +1355,7 @@ watch(() => props.isOpen, (newVal) => {
           &.ant-btn-default {
             border: 1px solid var(--gray-300);
             color: var(--gray-700);
-            background: white;
+            background: var(--gray-0);
 
             &:hover {
               border-color: var(--main-color);
@@ -1277,7 +1366,7 @@ watch(() => props.isOpen, (newVal) => {
           &.ant-btn-primary {
             background: var(--main-color);
             border: none;
-            color: white;
+            color: var(--gray-0);
 
             &:hover {
               background: var(--main-color);
@@ -1290,10 +1379,27 @@ watch(() => props.isOpen, (newVal) => {
   }
 }
 
+.clear-btn {
+  padding: 0;
+  height: auto;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--main-700);
+
+  &:hover {
+    color: var(--main-800);
+  }
+}
+
 // 响应式适配
 @media (max-width: 768px) {
   .agent-config-sidebar.open {
-    width: 100vw;
+    width: 100%;
+  }
+
+  .sidebar-header,
+  .sidebar-content {
+    min-width: 100% !important;
   }
 }
 </style>

@@ -7,21 +7,29 @@ import { apiGet, apiPost } from './base'
  */
 
 // =============================================================================
-// === LightRAG图知识库接口分组 ===
+// === 统一图谱接口 (Unified Graph API) ===
 // =============================================================================
 
-export const lightragApi = {
+export const unifiedApi = {
   /**
-   * 获取LightRAG知识图谱子图数据
+   * 获取所有可用的知识图谱列表
+   * @returns {Promise} - 图谱列表
+   */
+  getGraphs: async () => {
+    return await apiGet('/api/graph/list', {}, true)
+  },
+
+  /**
+   * 获取子图数据 (统一接口)
    * @param {Object} params - 查询参数
-   * @param {string} params.db_id - LightRAG数据库ID
-   * @param {string} params.node_label - 节点标签（"*"获取全图）
+   * @param {string} params.db_id - 图谱ID
+   * @param {string} params.node_label - 节点标签/关键词
    * @param {number} params.max_depth - 最大深度
    * @param {number} params.max_nodes - 最大节点数
    * @returns {Promise} - 子图数据
    */
   getSubgraph: async (params) => {
-    const { db_id, node_label = "*", max_depth = 2, max_nodes = 100 } = params
+    const { db_id, node_label = '*', max_depth = 2, max_nodes = 100 } = params
 
     if (!db_id) {
       throw new Error('db_id is required')
@@ -34,37 +42,12 @@ export const lightragApi = {
       max_nodes: max_nodes.toString()
     })
 
-    return await apiGet(`/api/graph/lightrag/subgraph?${queryParams.toString()}`, {}, true)
+    return await apiGet(`/api/graph/subgraph?${queryParams.toString()}`, {}, true)
   },
 
   /**
-   * 获取所有可用的LightRAG数据库
-   * @returns {Promise} - LightRAG数据库列表
-   */
-  getDatabases: async () => {
-    return await apiGet('/api/graph/lightrag/databases', {}, true)
-  },
-
-  /**
-   * 获取LightRAG图谱标签列表
-   * @param {string} db_id - LightRAG数据库ID
-   * @returns {Promise} - 标签列表
-   */
-  getLabels: async (db_id) => {
-    if (!db_id) {
-      throw new Error('db_id is required')
-    }
-
-    const queryParams = new URLSearchParams({
-      db_id: db_id
-    })
-
-    return await apiGet(`/api/graph/lightrag/labels?${queryParams.toString()}`, {}, true)
-  },
-
-  /**
-   * 获取LightRAG图谱统计信息
-   * @param {string} db_id - LightRAG数据库ID
+   * 获取图谱统计信息 (统一接口)
+   * @param {string} db_id - 图谱ID
    * @returns {Promise} - 统计信息
    */
   getStats: async (db_id) => {
@@ -76,35 +59,24 @@ export const lightragApi = {
       db_id: db_id
     })
 
-    return await apiGet(`/api/graph/lightrag/stats?${queryParams.toString()}`, {}, true)
-  }
-}
+    return await apiGet(`/api/graph/stats?${queryParams.toString()}`, {}, true)
+  },
 
-// =============================================================================
-// === CodeHub图知识库接口分组 ===
-// =============================================================================
-
-export const codehubGraphApi = {
   /**
-   * 获取CodeHub知识图谱子图数据
-   * @param {Object} params - 查询参数
-   * @param {string} params.db_id - CodeHub数据库ID
-   * @param {number} params.max_nodes - 最大节点数
-   * @returns {Promise} - 子图数据
+   * 获取图谱标签列表 (统一接口)
+   * @param {string} db_id - 图谱ID
+   * @returns {Promise} - 标签列表
    */
-  getSubgraph: async (params) => {
-    const { db_id, max_nodes = 200 } = params
-
+  getLabels: async (db_id) => {
     if (!db_id) {
       throw new Error('db_id is required')
     }
 
     const queryParams = new URLSearchParams({
-      db_id: db_id,
-      max_nodes: max_nodes.toString()
+      db_id: db_id
     })
 
-    return await apiGet(`/api/graph/codehub/subgraph?${queryParams.toString()}`, {}, true)
+    return await apiGet(`/api/graph/labels?${queryParams.toString()}`, {}, true)
   }
 }
 
@@ -149,13 +121,27 @@ export const neo4jApi = {
    * 通过JSONL文件添加图谱实体到Neo4j
    * @param {string} file_path - JSONL文件路径
    * @param {string} kgdb_name - Neo4j数据库名称（默认为'neo4j'）
+   * @param {string} embed_model_name - 嵌入模型名称 (可选)
+   * @param {number} batch_size - 批处理大小 (可选)
    * @returns {Promise} - 添加结果
    */
-  addEntities: async (file_path, kgdb_name = 'neo4j') => {
-    return await apiPost('/api/graph/neo4j/add-entities', {
-      file_path: file_path,
-      kgdb_name: kgdb_name
-    }, {}, true)
+  addEntities: async (
+    file_path,
+    kgdb_name = 'neo4j',
+    embed_model_name = null,
+    batch_size = null
+  ) => {
+    return await apiPost(
+      '/api/graph/neo4j/add-entities',
+      {
+        file_path: file_path,
+        kgdb_name: kgdb_name,
+        embed_model_name: embed_model_name,
+        batch_size: batch_size
+      },
+      {},
+      true
+    )
   },
 
   /**
@@ -164,9 +150,14 @@ export const neo4jApi = {
    * @returns {Promise} - 索引结果
    */
   indexEntities: async (kgdb_name = 'neo4j') => {
-    return await apiPost('/api/graph/neo4j/index-entities', {
-      kgdb_name: kgdb_name
-    }, {}, true)
+    return await apiPost(
+      '/api/graph/neo4j/index-entities',
+      {
+        kgdb_name: kgdb_name
+      },
+      {},
+      true
+    )
   },
 
   /**
@@ -189,18 +180,18 @@ export const neo4jApi = {
  */
 export const getEntityTypeColor = (entityType) => {
   const colorMap = {
-    'person': '#FF6B6B',      // 红色 - 人物
-    'organization': '#4ECDC4', // 青色 - 组织
-    'location': '#45B7D1',    // 蓝色 - 地点
-    'geo': '#45B7D1',         // 蓝色 - 地理位置
-    'event': '#96CEB4',       // 绿色 - 事件
-    'category': '#FFEAA7',    // 黄色 - 分类
-    'equipment': '#DDA0DD',   // 紫色 - 设备
-    'athlete': '#FF7675',     // 红色 - 运动员
-    'record': '#FD79A8',      // 粉色 - 记录
-    'year': '#FDCB6E',        // 橙色 - 年份
-    'UNKNOWN': '#B2BEC3',     // 灰色 - 未知
-    'unknown': '#B2BEC3'      // 灰色 - 未知
+    person: '#FF6B6B', // 红色 - 人物
+    organization: '#4ECDC4', // 青色 - 组织
+    location: '#45B7D1', // 蓝色 - 地点
+    geo: '#45B7D1', // 蓝色 - 地理位置
+    event: '#96CEB4', // 绿色 - 事件
+    category: '#FFEAA7', // 黄色 - 分类
+    equipment: '#DDA0DD', // 紫色 - 设备
+    athlete: '#FF7675', // 红色 - 运动员
+    record: '#FD79A8', // 粉色 - 记录
+    year: '#FDCB6E', // 橙色 - 年份
+    UNKNOWN: '#B2BEC3', // 灰色 - 未知
+    unknown: '#B2BEC3' // 灰色 - 未知
   }
 
   return colorMap[entityType] || colorMap['unknown']
@@ -250,11 +241,21 @@ export const getGraphStats = async () => {
   return neo4jApi.getInfo()
 }
 
-// 保持旧的分组导出，便于批量替换
+// 兼容性导出 - 使用统一接口替代旧有的 graphApi
 export const graphApi = {
-  getSubgraph: lightragApi.getSubgraph,
-  getDatabases: lightragApi.getDatabases,
-  getLabels: lightragApi.getLabels,
-  getStats: lightragApi.getStats,
-  ...neo4jApi  // 临时兼容
+  // 使用统一接口替代 LightRAG 接口
+  getSubgraph: unifiedApi.getSubgraph,
+  getDatabases: async () => {
+    // 使用统一接口获取所有图谱，然后过滤出 LightRAG 类型的
+    const response = await unifiedApi.getGraphs()
+    if (response.success) {
+      const lightragDbs = response.data.filter((graph) => graph.type === 'lightrag')
+      return { success: true, data: { databases: lightragDbs } }
+    }
+    return response
+  },
+  getLabels: unifiedApi.getLabels,
+  getStats: unifiedApi.getStats,
+  // 保留 Neo4j 接口
+  ...neo4jApi
 }

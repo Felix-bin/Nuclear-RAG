@@ -16,13 +16,14 @@ import { message } from 'ant-design-vue'
  */
 export async function apiRequest(url, options = {}, requiresAuth = true, responseType = 'json') {
   try {
+    const isFormData = options?.body instanceof FormData
     // 默认请求配置
     const requestOptions = {
       ...options,
       headers: {
-        'Content-Type': 'application/json',
-        ...options.headers,
-      },
+        ...(!isFormData ? { 'Content-Type': 'application/json' } : {}),
+        ...options.headers
+      }
     }
 
     // 如果需要认证，添加认证头
@@ -49,15 +50,26 @@ export async function apiRequest(url, options = {}, requiresAuth = true, respons
         status: response.status,
         statusText: response.statusText,
         headers: Object.fromEntries(response.headers.entries())
-      });
+      })
 
       try {
         errorData = await response.json()
         errorMessage = errorData.detail || errorData.message || errorMessage
-        console.log('API错误详情:', errorData);
+        console.log('API错误详情:', errorData)
+
+        // 如果是422错误，打印更详细的信息
+        if (response.status === 422) {
+          console.error('422验证错误详情:', {
+            url,
+            requestMethod: requestOptions.method,
+            requestHeaders: requestOptions.headers,
+            requestBody: requestOptions.body,
+            responseData: errorData
+          })
+        }
       } catch (e) {
         // 如果无法解析JSON，使用默认错误信息
-        console.log('无法解析错误响应JSON:', e);
+        console.log('无法解析错误响应JSON:', e)
       }
 
       // 特殊处理401和403错误
@@ -66,11 +78,12 @@ export async function apiRequest(url, options = {}, requiresAuth = true, respons
         const userStore = useUserStore()
 
         // 检查是否是token过期
-        const isTokenExpired = errorData &&
+        const isTokenExpired =
+          errorData &&
           (errorData.detail?.includes('令牌已过期') ||
-           errorData.detail?.includes('token expired') ||
-           errorMessage?.includes('令牌已过期') ||
-           errorMessage?.includes('token expired'))
+            errorData.detail?.includes('token expired') ||
+            errorMessage?.includes('令牌已过期') ||
+            errorMessage?.includes('token expired'))
 
         message.error(isTokenExpired ? '登录已过期，请重新登录' : '认证失败，请重新登录')
 
@@ -88,7 +101,7 @@ export async function apiRequest(url, options = {}, requiresAuth = true, respons
       } else if (response.status === 403) {
         throw new Error('没有权限执行此操作')
       } else if (response.status === 500) {
-        throw new Error('Server 500 Error, please check the log use `docker logs api-dev`')
+        throw new Error('服务器内部错误，请使用 docker logs api-dev 查看详细日志')
       }
 
       throw new Error(errorMessage)
@@ -151,7 +164,7 @@ export function apiPost(url, data = {}, options = {}, requiresAuth = true, respo
     url,
     {
       method: 'POST',
-      body: JSON.stringify(data),
+      body: data instanceof FormData ? data : JSON.stringify(data),
       ...options
     },
     requiresAuth,
@@ -183,7 +196,7 @@ export function apiPut(url, data = {}, options = {}, requiresAuth = true, respon
     url,
     {
       method: 'PUT',
-      body: JSON.stringify(data),
+      body: data instanceof FormData ? data : JSON.stringify(data),
       ...options
     },
     requiresAuth,
@@ -213,12 +226,10 @@ export function apiDelete(url, options = {}, requiresAuth = true, responseType =
   return apiRequest(url, { method: 'DELETE', ...options }, requiresAuth, responseType)
 }
 
-
 export function apiAdminDelete(url, options = {}) {
   checkAdminPermission()
   return apiDelete(url, options, true)
 }
-
 
 export function apiSuperAdminDelete(url, options = {}) {
   checkSuperAdminPermission()

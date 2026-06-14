@@ -72,12 +72,8 @@
                 <a-select-option value="deleted">已删除</a-select-option>
                 <a-select-option value="all">全部</a-select-option>
               </a-select>
-              <a-button size="small" @click="loadConversations" :loading="loading">
-                刷新
-              </a-button>
-              <a-button size="small" type="primary" @click="showFeedbackList">
-                反馈详情
-              </a-button>
+              <a-button size="small" @click="loadConversations" :loading="loading"> 刷新 </a-button>
+              <a-button size="small" @click="feedbackModal.show()"> 反馈详情 </a-button>
             </a-space>
           </template>
 
@@ -92,7 +88,12 @@
           >
             <template #bodyCell="{ column, record }">
               <template v-if="column.key === 'title'">
-                <a @click="handleViewDetail(record)" class="conversation-title" :class="{ 'loading': loadingDetail }">{{ record.title || '未命名对话' }}</a>
+                <a
+                  @click="handleViewDetail(record)"
+                  class="conversation-title"
+                  :class="{ loading: loadingDetail }"
+                  >{{ record.title || '未命名对话' }}</a
+                >
               </template>
               <template v-if="column.key === 'status'">
                 <a-tag :color="record.status === 'active' ? 'green' : 'red'" size="small">
@@ -103,7 +104,12 @@
                 <span class="time-text">{{ formatDate(record.updated_at) }}</span>
               </template>
               <template v-if="column.key === 'actions'">
-                <a-button type="link" size="small" @click="handleViewDetail(record)" :loading="loadingDetail">
+                <a-button
+                  type="link"
+                  size="small"
+                  @click="handleViewDetail(record)"
+                  :loading="loadingDetail"
+                >
                   详情
                 </a-button>
               </template>
@@ -113,57 +119,16 @@
       </div>
     </div>
 
-    <!-- 反馈列表模态框 -->
-    <a-modal
-      v-model:open="feedbackModalVisible"
-      title="用户反馈详情"
-      width="1000px"
-      :footer="null"
-    >
-      <a-space style="margin-bottom: 16px">
-        <a-radio-group v-model:value="feedbackFilter" @change="loadFeedbacks">
-          <a-radio-button value="all">全部</a-radio-button>
-          <a-radio-button value="like">点赞</a-radio-button>
-          <a-radio-button value="dislike">点踩</a-radio-button>
-        </a-radio-group>
-      </a-space>
-
-      <a-table
-        :columns="feedbackColumns"
-        :data-source="feedbacks"
-        :loading="loadingFeedbacks"
-        :pagination="feedbackPagination"
-        row-key="id"
-        size="small"
-      >
-        <template #bodyCell="{ column, record }">
-          <template v-if="column.key === 'rating'">
-            <a-tag :color="record.rating === 'like' ? 'green' : 'red'">
-              <template #icon>
-                <LikeOutlined v-if="record.rating === 'like'" />
-                <DislikeOutlined v-else />
-              </template>
-              {{ record.rating === 'like' ? '点赞' : '点踩' }}
-            </a-tag>
-          </template>
-          <template v-if="column.key === 'reason'">
-            <span v-if="record.reason">{{ record.reason }}</span>
-            <span v-else style="color: #999">-</span>
-          </template>
-          <template v-if="column.key === 'created_at'">
-            {{ formatFullDate(record.created_at) }}
-          </template>
-        </template>
-      </a-table>
-    </a-modal>
+    <!-- 反馈模态框 -->
+    <FeedbackModalComponent ref="feedbackModal" />
   </div>
 </template>
 
 <script setup>
 import { ref, reactive, onMounted, onUnmounted } from 'vue'
 import { message } from 'ant-design-vue'
-import { LikeOutlined, DislikeOutlined } from '@ant-design/icons-vue'
 import { dashboardApi } from '@/apis/dashboard_api'
+import dayjs, { parseToShanghai } from '@/utils/time'
 
 // 导入子组件
 import StatusBar from '@/components/StatusBar.vue'
@@ -173,6 +138,10 @@ import KnowledgeStatsComponent from '@/components/dashboard/KnowledgeStatsCompon
 import AgentStatsComponent from '@/components/dashboard/AgentStatsComponent.vue'
 import CallStatsComponent from '@/components/dashboard/CallStatsComponent.vue'
 import StatsOverviewComponent from '@/components/dashboard/StatsOverviewComponent.vue'
+import FeedbackModalComponent from '@/components/dashboard/FeedbackModalComponent.vue'
+
+// 组件引用
+const feedbackModal = ref(null)
 
 // 统计数据 - 使用新的响应式结构
 const basicStats = ref({})
@@ -187,24 +156,13 @@ const allStatsData = ref({
 const filters = reactive({
   user_id: '',
   agent_id: '',
-  status: 'active',
+  status: 'active'
 })
 
 // 对话列表
 const conversations = ref([])
 const loading = ref(false)
 const loadingDetail = ref(false)
-
-// 反馈相关
-const feedbackModalVisible = ref(false)
-const feedbacks = ref([])
-const loadingFeedbacks = ref(false)
-const feedbackFilter = ref('all')
-const feedbackPagination = reactive({
-  current: 1,
-  pageSize: 20,
-  total: 0,
-})
 
 // 调用统计子组件引用
 const callStatsRef = ref(null)
@@ -216,7 +174,7 @@ const conversationPagination = reactive({
   total: 0,
   showSizeChanger: false,
   showQuickJumper: false,
-  showTotal: (total, range) => `${range[0]}-${range[1]} / ${total}`,
+  showTotal: (total, range) => `${range[0]}-${range[1]} / ${total}`
 })
 
 // 表格列定义
@@ -225,84 +183,41 @@ const conversationColumns = [
     title: '对话标题',
     dataIndex: 'title',
     key: 'title',
-    ellipsis: true,
+    ellipsis: true
   },
   {
     title: '用户',
     dataIndex: 'user_id',
     key: 'user_id',
     width: '80px',
-    ellipsis: true,
+    ellipsis: true
   },
   {
     title: '消息数',
     dataIndex: 'message_count',
     key: 'message_count',
     width: '60px',
-    align: 'center',
+    align: 'center'
   },
   {
     title: '状态',
     dataIndex: 'status',
     key: 'status',
     width: '70px',
-    align: 'center',
+    align: 'center'
   },
   {
     title: '更新时间',
     dataIndex: 'updated_at',
     key: 'updated_at',
-    width: '120px',
+    width: '120px'
   },
   {
     title: '操作',
     key: 'actions',
     width: '60px',
-    align: 'center',
-  },
-]
-
-// 反馈表格列定义
-const feedbackColumns = [
-  {
-    title: '反馈类型',
-    key: 'rating',
-    width: '10%',
-  },
-  {
-    title: '用户ID',
-    dataIndex: 'user_id',
-    key: 'user_id',
-    width: '12%',
-  },
-  {
-    title: '智能体ID',
-    dataIndex: 'agent_id',
-    key: 'agent_id',
-    width: '12%',
-  },
-  {
-    title: '对话标题',
-    dataIndex: 'conversation_title',
-    key: 'conversation_title',
-    width: '15%',
-  },
-  {
-    title: '消息内容',
-    dataIndex: 'message_content',
-    key: 'message_content',
-    width: '25%',
-  },
-  {
-    title: '反馈原因',
-    key: 'reason',
-    width: '16%',
-  },
-  {
-    title: '时间',
-    key: 'created_at',
-    width: '10%',
-  },
+    align: 'center'
+  }
 ]
 
 // 子组件引用
@@ -360,7 +275,7 @@ const loadConversations = async () => {
       agent_id: filters.agent_id || undefined,
       status: filters.status,
       limit: conversationPagination.pageSize,
-      offset: (conversationPagination.current - 1) * conversationPagination.pageSize,
+      offset: (conversationPagination.current - 1) * conversationPagination.pageSize
     }
 
     const response = await dashboardApi.getConversations(params)
@@ -376,20 +291,21 @@ const loadConversations = async () => {
 // 日期格式化
 const formatDate = (dateString) => {
   if (!dateString) return '-'
-  const date = new Date(dateString)
-  const now = new Date()
-  const diffMs = now - date
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
+  const parsed = parseToShanghai(dateString)
+  if (!parsed) return '-'
+  const now = dayjs().tz('Asia/Shanghai')
+  const diffDays = now.startOf('day').diff(parsed.startOf('day'), 'day')
 
   if (diffDays === 0) {
-    return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
-  } else if (diffDays === 1) {
-    return '昨天'
-  } else if (diffDays < 7) {
-    return `${diffDays}天前`
-  } else {
-    return date.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })
+    return parsed.format('HH:mm')
   }
+  if (diffDays === 1) {
+    return '昨天'
+  }
+  if (diffDays < 7) {
+    return `${diffDays}天前`
+  }
+  return parsed.format('MM-DD')
 }
 
 // 查看对话详情
@@ -408,7 +324,7 @@ const handleViewDetail = async (record) => {
 
 // 处理过滤器变化
 const handleFilterChange = () => {
-  pagination.current = 1
+  conversationPagination.current = 1
   loadConversations()
 }
 
@@ -417,45 +333,6 @@ const handleTableChange = (pag) => {
   conversationPagination.current = pag.current
   conversationPagination.pageSize = pag.pageSize
   loadConversations()
-}
-
-// 格式化完整日期
-const formatFullDate = (dateString) => {
-  if (!dateString) return '-'
-  const date = new Date(dateString)
-  return date.toLocaleString('zh-CN', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-}
-
-// 显示反馈列表
-const showFeedbackList = () => {
-  feedbackModalVisible.value = true
-  loadFeedbacks()
-}
-
-// 加载反馈列表
-const loadFeedbacks = async () => {
-  loadingFeedbacks.value = true
-  try {
-    const params = {
-      rating: feedbackFilter.value === 'all' ? undefined : feedbackFilter.value,
-      limit: feedbackPagination.pageSize,
-      offset: (feedbackPagination.current - 1) * feedbackPagination.pageSize,
-    }
-
-    const response = await dashboardApi.getFeedbacks(params)
-    feedbacks.value = response
-  } catch (error) {
-    console.error('加载反馈列表失败:', error)
-    message.error('加载反馈列表失败')
-  } finally {
-    loadingFeedbacks.value = false
-  }
 }
 
 // 清理函数 - 清理所有子组件的图表实例
@@ -480,7 +357,6 @@ onUnmounted(() => {
 </script>
 
 <style scoped lang="less">
-
 .dashboard-container {
   // padding: 0 24px 24px 24px;
   background-color: var(--gray-25);
@@ -512,7 +388,7 @@ onUnmounted(() => {
       .conversations-section,
       .call-stats-section {
         border-color: var(--gray-200);
-        box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
+        box-shadow: 0 1px 3px 0 var(--shadow-100);
       }
     }
 
@@ -567,7 +443,7 @@ onUnmounted(() => {
   &:hover {
     background-color: var(--gray-25);
     border-color: var(--gray-200);
-    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
+    box-shadow: 0 1px 3px 0 var(--shadow-100);
   }
 
   :deep(.ant-card-head) {
@@ -665,8 +541,8 @@ onUnmounted(() => {
       margin-bottom: 24px;
 
       .summary-card {
-        background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
-        border: 1px solid #e2e8f0;
+        background: linear-gradient(135deg, var(--gray-50) 0%, var(--gray-100) 100%);
+        border: 1px solid var(--gray-200);
         border-radius: 8px;
         padding: 12px;
         text-align: center;
@@ -674,13 +550,13 @@ onUnmounted(() => {
         .summary-value {
           font-size: 16px;
           font-weight: 600;
-          color: #1e293b;
+          color: var(--gray-800);
           margin-bottom: 4px;
         }
 
         .summary-label {
           font-size: 11px;
-          color: #64748b;
+          color: var(--gray-500);
           font-weight: 500;
         }
       }
@@ -825,5 +701,3 @@ onUnmounted(() => {
   }
 }
 </style>
-
-

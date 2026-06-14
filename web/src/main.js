@@ -1,15 +1,17 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
+import piniaPluginPersistedstate from 'pinia-plugin-persistedstate'
 
 import App from './App.vue'
 import router from './router'
 
-import Antd from 'ant-design-vue';
-import 'ant-design-vue/dist/reset.css';
+import Antd from 'ant-design-vue'
+import 'ant-design-vue/dist/reset.css'
 import '@/assets/css/main.css'
 
 const app = createApp(App)
 const pinia = createPinia()
+pinia.use(piniaPluginPersistedstate)
 
 app.use(pinia)
 app.use(router)
@@ -19,10 +21,5 @@ app.use(Antd)
 import { useInfoStore } from '@/stores/info'
 const infoStore = useInfoStore()
 infoStore.loadInfoConfig()
-
-// 引导自动登录（从安全存储恢复）
-import { useUserStore } from '@/stores/user'
-const userStore = useUserStore()
-userStore.bootstrap()
 
 app.mount('#app')

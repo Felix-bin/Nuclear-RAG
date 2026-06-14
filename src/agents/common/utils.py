@@ -1,7 +1,8 @@
 from datetime import UTC, datetime
 
-from langchain_core.messages import AIMessageChunk, ToolMessage
+from langchain.messages import AIMessageChunk, ToolMessage
 from langchain_core.runnables import RunnableConfig
+
 from src.agents.common.base import BaseAgent
 
 

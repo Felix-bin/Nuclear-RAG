@@ -1,53 +1,45 @@
 <template>
   <div class="refs" v-if="showRefs">
     <div class="tags">
+      <!-- 反馈 -->
       <span
         class="item btn"
-        :class="{ 'disabled': feedbackState.hasSubmitted }"
+        :class="{ disabled: feedbackState.hasSubmitted }"
         @click="likeThisResponse(msg)"
         :title="feedbackState.hasSubmitted && feedbackState.rating === 'like' ? '已点赞' : '点赞'"
       >
-        <LikeFilled v-if="feedbackState.rating === 'like'" />
-        <LikeOutlined v-else />
+        <ThumbsUp size="12" :fill="feedbackState.rating === 'like' ? 'currentColor' : 'none'" />
       </span>
       <span
         class="item btn"
-        :class="{ 'disabled': feedbackState.hasSubmitted }"
+        :class="{ disabled: feedbackState.hasSubmitted }"
         @click="dislikeThisResponse(msg)"
-        :title="feedbackState.hasSubmitted && feedbackState.rating === 'dislike' ? '已点踩' : '点踩'"
+        :title="
+          feedbackState.hasSubmitted && feedbackState.rating === 'dislike' ? '已点踩' : '点踩'
+        "
       >
-        <DislikeFilled v-if="feedbackState.rating === 'dislike'" />
-        <DislikeOutlined v-else />
+        <ThumbsDown
+          size="12"
+          :fill="feedbackState.rating === 'dislike' ? 'currentColor' : 'none'"
+        />
       </span>
+      <!-- 模型名称 -->
       <span v-if="showKey('model') && getModelName(msg)" class="item" @click="console.log(msg)">
-        <BulbOutlined /> {{ getModelName(msg) }}
+        <Bot size="12" /> {{ getModelName(msg) }}
       </span>
-      <span
-        v-if="showKey('copy')"
-        class="item btn" @click="copyText(msg.content)" title="复制"><CopyOutlined /></span>
+      <!-- 复制 -->
+      <span v-if="showKey('copy')" class="item btn" @click="copyText(msg.content)" title="复制">
+        <Check v-if="isCopied" size="12" />
+        <Copy v-else size="12" />
+      </span>
+
+      <!-- 重试 -->
       <span
         v-if="showKey('regenerate')"
-        class="item btn" @click="regenerateMessage()" title="重新生成"><ReloadOutlined /></span>
-      <span
-        v-if="isLatestMessage && showKey('subGraph') && hasSubGraphData(msg)"
         class="item btn"
-        @click="openGlobalRefs('graph')"
-      >
-        <DeploymentUnitOutlined /> 关系图
-      </span>
-      <span
-        class="item btn"
-        v-if="isLatestMessage && showKey('webSearch') && msg.refs?.web_search.results.length > 0"
-        @click="openGlobalRefs('webSearch')"
-      >
-        <GlobalOutlined /> 网页搜索 {{ msg.refs.web_search?.results.length }}
-      </span>
-      <span
-        class="item btn"
-        v-if="isLatestMessage && showKey('knowledgeBase') && hasKnowledgeBaseData(msg)"
-        @click="openGlobalRefs('knowledgeBase')"
-      >
-        <FileTextOutlined /> 知识库
+        @click="regenerateMessage()"
+        title="重新生成"
+        ><RotateCcw size="12" />
       </span>
     </div>
   </div>
@@ -73,24 +65,13 @@
 </template>
 
 <script setup>
-import { ref, computed, reactive, onMounted } from 'vue'
+import { ref, computed, reactive, watch } from 'vue'
 import { useClipboard } from '@vueuse/core'
 import { message } from 'ant-design-vue'
-import {
-  GlobalOutlined,
-  FileTextOutlined,
-  CopyOutlined,
-  DeploymentUnitOutlined,
-  BulbOutlined,
-  ReloadOutlined,
-  LikeOutlined,
-  LikeFilled,
-  DislikeOutlined,
-  DislikeFilled,
-} from '@ant-design/icons-vue'
+import { ThumbsUp, ThumbsDown, Bot, Copy, Check, RotateCcw } from 'lucide-vue-next'
 import { agentApi } from '@/apis'
 
-const emit = defineEmits(['retry', 'openRefs']);
+const emit = defineEmits(['retry', 'openRefs'])
 const props = defineProps({
   message: Object,
   showRefs: {
@@ -109,8 +90,31 @@ const msg = ref(props.message)
 const feedbackState = reactive({
   hasSubmitted: false,
   rating: null, // 'like' or 'dislike'
-  reason: null,
+  reason: null
 })
+
+// 初始化反馈状态 - 从 message.feedback 读取历史反馈
+const initFeedbackState = () => {
+  if (msg.value?.feedback) {
+    feedbackState.hasSubmitted = true
+    feedbackState.rating = msg.value.feedback.rating
+    feedbackState.reason = msg.value.feedback.reason
+  } else {
+    feedbackState.hasSubmitted = false
+    feedbackState.rating = null
+    feedbackState.reason = null
+  }
+}
+
+// 监听 message prop 变化 (用于切换对话时更新状态)
+watch(
+  () => props.message,
+  () => {
+    msg.value = props.message
+    initFeedbackState()
+  },
+  { immediate: true }
+)
 
 // Modal state for dislike
 const dislikeModalVisible = ref(false)
@@ -127,12 +131,19 @@ const showKey = (key) => {
   return props.showRefs.includes(key)
 }
 
+// 复制状态
+const isCopied = ref(false)
+
 // 定义 copy 方法
 const copyText = async (text) => {
   if (isSupported) {
     try {
       await copy(text)
       message.success('文本已复制到剪贴板')
+      isCopied.value = true
+      setTimeout(() => {
+        isCopied.value = false
+      }, 2000)
     } catch (error) {
       console.error('复制失败:', error)
       message.error('复制失败，请手动复制')
@@ -146,31 +157,14 @@ const copyText = async (text) => {
 const showRefs = computed(() => {
   // 如果只是为了显示模型信息，不需要检查状态
   if (props.showRefs && Array.isArray(props.showRefs) && props.showRefs.includes('model')) {
-    return true;
+    return true
   }
   // 原有的逻辑
-  return (msg.value.role=='received' || msg.value.role=='assistant') && msg.value.status=='finished';
+  return (
+    (msg.value.role == 'received' || msg.value.role == 'assistant') &&
+    msg.value.status == 'finished'
+  )
 })
-
-// 打开全局refs抽屉
-const openGlobalRefs = (type) => {
-  emit('openRefs', {
-    type,
-    refs: msg.value.refs
-  })
-}
-
-const hasSubGraphData = (msg) => {
-  return msg.refs &&
-         msg.refs.graph_base &&
-         msg.refs.graph_base.results.nodes.length > 0;
-}
-
-const hasKnowledgeBaseData = (msg) => {
-  return msg.refs &&
-         msg.refs.knowledge_base &&
-         msg.refs.knowledge_base.results.length > 0;
-}
 
 // 添加重新生成方法
 const regenerateMessage = () => {
@@ -181,31 +175,14 @@ const regenerateMessage = () => {
 const getModelName = (msg) => {
   // 优先检查 response_metadata.model_name
   if (msg.response_metadata?.model_name) {
-    return msg.response_metadata.model_name;
+    return msg.response_metadata.model_name
   }
   // 兼容旧格式 meta.server_model_name
   if (msg.meta?.server_model_name) {
-    return msg.meta.server_model_name;
+    return msg.meta.server_model_name
   }
-  return null;
+  return null
 }
-
-// Load existing feedback on mount
-onMounted(async () => {
-  if (msg.value?.id) {
-    try {
-      const response = await agentApi.getMessageFeedback(msg.value.id)
-      if (response.has_feedback) {
-        feedbackState.hasSubmitted = true
-        feedbackState.rating = response.feedback.rating
-        feedbackState.reason = response.feedback.reason
-      }
-    } catch (error) {
-      console.error('Failed to load feedback:', error)
-    }
-  }
-})
-
 // Handle like action
 const likeThisResponse = async (msg) => {
   if (feedbackState.hasSubmitted) {
@@ -261,11 +238,7 @@ const dislikeThisResponse = async (msg) => {
 const submitDislikeFeedback = async () => {
   try {
     submittingFeedback.value = true
-    await agentApi.submitMessageFeedback(
-      msg.value.id,
-      'dislike',
-      dislikeReason.value || null
-    )
+    await agentApi.submitMessageFeedback(msg.value.id, 'dislike', dislikeReason.value || null)
 
     feedbackState.hasSubmitted = true
     feedbackState.rating = 'dislike'
@@ -308,11 +281,16 @@ const cancelDislike = () => {
   .item {
     background: var(--gray-50);
     color: var(--gray-700);
-    padding: 2px 8px;
+    padding: 6px 8px;
     border-radius: 8px;
     font-size: 13px;
     user-select: none;
     transition: all 0.2s ease;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    line-height: 1;
 
     &.btn {
       cursor: pointer;
@@ -325,9 +303,6 @@ const cancelDislike = () => {
 
       // Disabled state - when feedback has been submitted
       &.disabled {
-        cursor: not-allowed;
-        opacity: 0.7;
-
         &:hover {
           background: var(--gray-50);
         }

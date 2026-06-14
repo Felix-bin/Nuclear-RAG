@@ -1,73 +1,6 @@
 <template>
-  <div class="graph-section" :class="{ collapsed: !visible }" :style="style" v-if="isGraphSupported">
-    <div class="section-header">
-      <div class="header-left">
-        <h3 class="section-title">知识图谱</h3>
-        <div v-if="graphStats.displayed_nodes > 0 || graphStats.displayed_edges > 0" class="graph-stats">
-          <a-tag color="blue" size="small">节点: {{ graphStats.displayed_nodes }}</a-tag>
-          <a-tag color="green" size="small">边: {{ graphStats.displayed_edges }}</a-tag>
-          <!-- <a-tag v-if="graphStats.is_truncated" color="red" size="small">已截断</a-tag> -->
-        </div>
-      </div>
-      <div class="panel-actions">
-        <a-button
-          type="primary"
-          size="small"
-          @click="loadGraph"
-          :disabled="!isGraphSupported"
-          :icon='h(ReloadOutlined)'
-        >
-          加载图谱
-        </a-button>
-        <!-- 导出功能暂禁，等待 LightRAG 库修复
-        <a-button
-          type="primary"
-          size="small"
-          @click="showExportModal = true"
-          :disabled="!isGraphSupported"
-        >
-          导出图谱
-        </a-button>
-        -->
-        <!-- <a-button
-          type="text"
-          size="small"
-          @click="showSettings = true"
-        >
-          <SettingOutlined />
-          参数
-        </a-button> -->
-        <!-- <a-button
-          type="text"
-          size="small"
-          :icon="h(DeleteOutlined)"
-          title="清空"
-          @click="clearGraph"
-          :disabled="!isGraphSupported"
-        >
-          清空
-        </a-button> -->
-        <a-button
-          type="text"
-          size="small"
-          :icon="h(ExpandOutlined)"
-          title="最大化"
-          @click="toggleGraphMaximize"
-          :disabled="!isGraphSupported"
-        >
-          最大化
-        </a-button>
-        <a-button
-          type="text"
-          size="small"
-          @click="toggleVisible"
-          title="折叠/展开"
-        >
-          <component :is="visible ? UpOutlined : DownOutlined" />
-        </a-button>
-      </div>
-    </div>
-    <div class="graph-container-compact content" v-show="visible">
+  <div class="graph-section" v-if="isGraphSupported">
+    <div class="graph-container-compact">
       <div v-if="!isGraphSupported" class="graph-disabled">
         <div class="disabled-content">
           <h4>知识图谱不可用</h4>
@@ -75,26 +8,64 @@
           <p>只有 LightRAG 类型的知识库支持知识图谱。</p>
         </div>
       </div>
-      <KnowledgeGraphViewer
-        v-else
-        :initial-database-id="databaseId"
-        :hide-db-selector="true"
-        :hide-stats="true"
-        :hide-controls="!store.state.isGraphMaximized"
-        :initial-limit="graphLimit"
-        :initial-depth="graphDepth"
-        @update:stats="handleStatsUpdate"
-        ref="graphViewerRef"
-      />
+      <div v-else class="graph-wrapper">
+        <GraphCanvas
+          ref="graphRef"
+          :graph-data="graph.graphData"
+          @node-click="graph.handleNodeClick"
+          @edge-click="graph.handleEdgeClick"
+          @canvas-click="graph.handleCanvasClick"
+        >
+          <template #top>
+            <div class="compact-actions">
+              <div class="actions-left">
+                <a-input
+                  v-model:value="searchInput"
+                  placeholder="搜索实体"
+                  style="width: 240px"
+                  @keydown.enter="onSearch"
+                  allow-clear
+                >
+                  <template #suffix>
+                    <component
+                      :is="graph.fetching ? LoadingOutlined : SearchOutlined"
+                      @click="onSearch"
+                    />
+                  </template>
+                </a-input>
+                <a-button
+                  class="action-btn"
+                  :icon="h(ReloadOutlined)"
+                  :loading="graph.fetching"
+                  @click="loadGraph"
+                  title="刷新"
+                />
+              </div>
+              <div class="actions-right">
+                <a-button
+                  class="action-btn"
+                  :icon="h(SettingOutlined)"
+                  @click="showSettings = true"
+                  title="设置"
+                />
+              </div>
+            </div>
+          </template>
+        </GraphCanvas>
+
+        <!-- 详情浮动卡片 -->
+        <GraphDetailPanel
+          :visible="graph.showDetailDrawer"
+          :item="graph.selectedItem"
+          :type="graph.selectedItemType"
+          @close="graph.handleCanvasClick"
+          style="top: 50px; right: 10px"
+        />
+      </div>
     </div>
 
     <!-- 设置模态框 -->
-    <a-modal
-      v-model:open="showSettings"
-      title="图谱设置"
-      :footer="null"
-      width="300px"
-    >
+    <a-modal v-model:open="showSettings" title="图谱设置" :footer="null" width="300px">
       <div class="settings-form">
         <a-form layout="vertical">
           <a-form-item label="最大节点数 (limit)">
@@ -116,214 +87,238 @@
             />
           </a-form-item>
           <a-form-item>
-            <a-button type="primary" @click="applySettings" style="width: 100%">
-              应用
-            </a-button>
+            <a-button type="primary" @click="applySettings" style="width: 100%"> 应用 </a-button>
           </a-form-item>
         </a-form>
       </div>
     </a-modal>
-
-    <!-- 导出功能暂禁，等待 LightRAG 库修复
-    <a-modal
-      v-model:open="showExportModal"
-      title="导出图谱数据"
-      @ok="handleExport"
-      ok-text="导出"
-      cancel-text="取消"
-    >
-      <a-form layout="vertical">
-        <a-form-item label="导出格式">
-          <a-select v-model:value="exportOptions.format">
-            <a-select-option value="zip">ZIP 压缩包</a-select-option>
-          </a-select>
-        </a-form-item>
-        <a-form-item>
-          <a-checkbox v-model:checked="exportOptions.include_vectors" disabled>
-            包含向量数据 (暂不支持)
-          </a-checkbox>
-        </a-form-item>
-      </a-form>
-    </a-modal>
-    -->
-
   </div>
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue';
-import { useDatabaseStore } from '@/stores/database';
-import { useUserStore } from '@/stores/user';
-import { ReloadOutlined, DeleteOutlined, ExpandOutlined, UpOutlined, DownOutlined, SettingOutlined } from '@ant-design/icons-vue';
-import { message } from 'ant-design-vue';
-import KnowledgeGraphViewer from '@/components/KnowledgeGraphViewer.vue';
-import { h } from 'vue';
-
-const store = useDatabaseStore();
-const userStore = useUserStore();
+import { ref, computed, watch, nextTick, onUnmounted, reactive, h } from 'vue'
+import { useDatabaseStore } from '@/stores/database'
+import {
+  ReloadOutlined,
+  SettingOutlined,
+  SearchOutlined,
+  LoadingOutlined
+} from '@ant-design/icons-vue'
+import GraphCanvas from '@/components/GraphCanvas.vue'
+import GraphDetailPanel from '@/components/GraphDetailPanel.vue'
+import { getKbTypeLabel } from '@/utils/kb_utils'
+import { unifiedApi } from '@/apis/graph_api'
+import { message } from 'ant-design-vue'
+import { useGraph } from '@/composables/useGraph'
 
 const props = defineProps({
-  visible: {
+  active: {
     type: Boolean,
-    default: true
-  },
-  style: {
-    type: Object,
-    default: () => ({})
-  },
-});
+    default: false
+  }
+})
 
-// 添加调试日志
-console.log('KnowledgeGraphSection props:', props);
-console.log('KnowledgeGraphSection style prop:', props.style);
+const store = useDatabaseStore()
 
-const emit = defineEmits(['toggleVisible']);
+const databaseId = computed(() => store.databaseId)
+const kbType = computed(() => store.database.kb_type)
+const kbTypeLabel = computed(() => getKbTypeLabel(kbType.value || 'lightrag'))
 
-const databaseId = computed(() => store.databaseId);
-const kbType = computed(() => store.database.kb_type);
-const graphStats = computed({
-    get: () => store.graphStats,
-    set: (stats) => store.graphStats = stats
-});
+const graphRef = ref(null)
+const showSettings = ref(false)
+const graphLimit = ref(50)
+const graphDepth = ref(2)
+const searchInput = ref('')
 
-const graphViewerRef = ref(null);
-const showSettings = ref(false);
-const graphLimit = ref(200);
-const graphDepth = ref(2);
-
-const showExportModal = ref(false);
-const exportOptions = ref({
-  format: 'zip',
-  include_vectors: false,
-});
+const graph = reactive(useGraph(graphRef))
 
 // 计算属性：是否支持知识图谱
 const isGraphSupported = computed(() => {
-  const type = kbType.value?.toLowerCase();
-  return type === 'lightrag';
-});
+  const type = kbType.value?.toLowerCase()
+  return type === 'lightrag'
+})
 
-const toggleVisible = () => {
-  emit('toggleVisible');
-};
+let pendingLoadTimer = null
 
-const loadGraph = () => {
-  if (!(Object.keys(store.database?.files).length > 0)) {
-    return;
+const loadGraph = async () => {
+  if (!databaseId.value || !isGraphSupported.value) return
+
+  graph.fetching = true
+  try {
+    const res = await unifiedApi.getSubgraph({
+      db_id: databaseId.value,
+      node_label: searchInput.value || '*',
+      max_nodes: graphLimit.value,
+      max_depth: graphDepth.value
+    })
+
+    if (res.success && res.data) {
+      graph.updateGraphData(res.data.nodes, res.data.edges)
+    }
+  } catch (e) {
+    console.error('Failed to load graph:', e)
+    message.error('加载图谱失败')
+  } finally {
+    graph.fetching = false
   }
-  if (graphViewerRef.value && typeof graphViewerRef.value.loadFullGraph === 'function') {
-    graphViewerRef.value.loadFullGraph();
-  }
-};
-
-const clearGraph = () => {
-  if (graphViewerRef.value && typeof graphViewerRef.value.clearGraph === 'function') {
-    graphViewerRef.value.clearGraph();
-  }
-};
-
-const toggleGraphMaximize = () => {
-  store.state.isGraphMaximized = !store.state.isGraphMaximized;
-};
-
-const handleStatsUpdate = (stats) => {
-  graphStats.value = stats;
-};
+}
 
 const applySettings = () => {
-  showSettings.value = false;
-  // 设置已通过props传递给子组件，不需要额外操作
-};
+  showSettings.value = false
+  loadGraph()
+}
 
-// const handleExport = async () => {
-//   const dbId = store.databaseId;
-//   if (!dbId) {
-//     message.error('请先选择一个知识库');
-//     return;
-//   }
-//   try {
-//     const response = await fetch(`/api/knowledge/databases/${dbId}/export?format=${exportOptions.value.format}`, {
-//       headers: {
-//         ...userStore.getAuthHeaders()
-//       }
-//     });
+const onSearch = () => {
+  loadGraph()
+}
 
-//     if (!response.ok) {
-//       const errorData = await response.json();
-//       throw new Error(errorData.detail || `导出失败: ${response.statusText}`);
-//     }
+const scheduleGraphLoad = (delay = 200) => {
+  // 确保组件激活且数据库支持图谱功能
+  if (!props.active || !isGraphSupported.value || !databaseId.value) {
+    return
+  }
 
-//     const blob = await response.blob();
-//     const url = window.URL.createObjectURL(blob);
-//     const a = document.createElement('a');
-//     a.style.display = 'none';
-//     a.href = url;
+  if (pendingLoadTimer) {
+    clearTimeout(pendingLoadTimer)
+  }
+  pendingLoadTimer = setTimeout(async () => {
+    await nextTick()
+    if (props.active && isGraphSupported.value && databaseId.value) {
+      await loadGraph()
+    }
+  }, delay)
+}
 
-//     const disposition = response.headers.get('content-disposition');
-//     let filename = `export_${dbId}.zip`;
-//     if (disposition) {
-//         const filenameMatch = disposition.match(/filename="([^"]+)"/);
-//         if (filenameMatch && filenameMatch[1]) {
-//             filename = filenameMatch[1];
-//         }
-//     }
-//     a.download = filename;
-//     document.body.appendChild(a);
-//     a.click();
-//     window.URL.revokeObjectURL(url);
-//     document.body.removeChild(a);
+watch(
+  () => props.active,
+  (active) => {
+    if (active) {
+      scheduleGraphLoad()
+    }
+  },
+  { immediate: true }
+)
 
-//     message.success('导出任务已开始');
-//     showExportModal.value = false;
-//   } catch (error) {
-//     console.error('导出图谱失败:', error);
-//     message.error(error.message || '导出图谱失败');
-//   }
-// };
+watch(databaseId, () => {
+  graph.clearGraph()
+  if (isGraphSupported.value) {
+    scheduleGraphLoad(300)
+  }
+})
 
 watch(isGraphSupported, (supported) => {
-    if (supported) {
-        setTimeout(() => {
-            loadGraph();
-        }, 800);
-    }
-});
+  if (!supported) {
+    graph.clearGraph()
+    return
+  }
+  scheduleGraphLoad(200)
+})
 
+onUnmounted(() => {
+  if (pendingLoadTimer) {
+    clearTimeout(pendingLoadTimer)
+    pendingLoadTimer = null
+  }
+})
 </script>
 
 <style scoped lang="less">
 .graph-section {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+}
 
-  .graph-container-compact {
-    flex: 1;
-    min-height: 0;
-    padding: 0;
-    height: 100%;
-    border-radius: 0;
-  }
+.graph-container-compact {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+}
 
-  .graph-disabled {
+.graph-wrapper {
+  height: 100%;
+  width: 100%;
+  position: relative;
+}
+
+.compact-actions {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  right: 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  pointer-events: none; /* Let clicks pass through empty areas */
+
+  .actions-left,
+  .actions-right {
+    pointer-events: auto; /* Re-enable clicks for buttons/inputs */
     display: flex;
-    justify-content: center;
     align-items: center;
-    height: 200px;
+    gap: 4px;
+    background: var(--color-trans-light);
+    backdrop-filter: blur(4px);
+    padding: 2px;
+    border-radius: 8px;
+    box-shadow: 0 0 4px 0px var(--shadow-2);
   }
 
-  .disabled-content {
-    text-align: center;
-    color: #8c8c8c;
+  :deep(.ant-input-affix-wrapper) {
+    padding: 4px 11px;
+    border-radius: 6px;
+    border-color: transparent;
+    box-shadow: none;
+    background: var(--color-trans-light);
 
-    h4 {
-      margin-bottom: 8px;
+    &:hover,
+    &:focus,
+    &-focused {
+      background: var(--main-0);
+      border-color: var(--primary-color);
+    }
+
+    input {
+      background: transparent;
     }
   }
 
-  .content {
-    flex: 1;
-    min-height: 0;
+  .action-btn {
+    width: 32px;
+    height: 32px;
+    padding: 0;
     display: flex;
-    flex-direction: column;
-    height: 100%;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background: transparent;
+    color: var(--gray-600);
+    border-radius: 6px;
+    box-shadow: none;
+
+    &:hover {
+      background: rgba(0, 0, 0, 0.05);
+      color: var(--primary-color);
+    }
+  }
+}
+
+.graph-disabled {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100%;
+}
+
+.disabled-content {
+  text-align: center;
+  color: var(--gray-400);
+
+  h4 {
+    margin-bottom: 8px;
   }
 }
 </style>

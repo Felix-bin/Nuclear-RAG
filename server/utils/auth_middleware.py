@@ -3,10 +3,10 @@ import re
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.storage.db.manager import db_manager
-from src.storage.db.models import User
+from src.storage.postgres.manager import pg_manager
+from src.storage.postgres.models_business import User
 from server.utils.auth_utils import AuthUtils
 
 # 定义OAuth2密码承载器，指定token URL
@@ -17,24 +17,20 @@ PUBLIC_PATHS = [
     r"^/api/auth/token$",  # 登录
     r"^/api/auth/check-first-run$",  # 检查是否首次运行
     r"^/api/auth/initialize$",  # 初始化系统
-    r"^/api/auth/register$",  # 公开注册普通用户
     r"^/api$",  # Health Check
     r"^/api/system/health$",  # Health Check
     r"^/api/system/info$",  # 获取系统信息配置
 ]
 
 
-# 获取数据库会话
-def get_db():
-    db = db_manager.get_session()
-    try:
+# 获取数据库会话（异步版本）
+async def get_db():
+    async with pg_manager.get_async_session_context() as db:
         yield db
-    finally:
-        db.close()
 
 
-# 获取当前用户
-async def get_current_user(token: str | None = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+# 获取当前用户（异步版本）
+async def get_current_user(token: str | None = Depends(oauth2_scheme), db: AsyncSession = Depends(get_db)):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="无效的凭证",
@@ -62,8 +58,11 @@ async def get_current_user(token: str | None = Depends(oauth2_scheme), db: Sessi
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # 查找用户
-    user = db.query(User).filter(User.id == user_id).first()
+    # 查找用户（异步版本）
+    from sqlalchemy import select
+
+    result = await db.execute(select(User).filter(User.id == int(user_id)))
+    user = result.scalar_one_or_none()
     if user is None:
         raise credentials_exception
 

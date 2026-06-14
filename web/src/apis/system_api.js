@@ -1,11 +1,9 @@
-import { apiGet, apiPost, apiAdminGet, apiAdminPost, apiSuperAdminPost } from './base'
+import { apiGet, apiPost, apiAdminGet, apiAdminPost, apiAdminPut, apiAdminDelete } from './base'
 
 /**
  * 系统管理API模块
  * 包含系统配置、健康检查、信息管理等功能
  */
-
-
 
 // =============================================================================
 // === 健康检查分组 ===
@@ -34,7 +32,7 @@ export const configApi = {
    * 获取系统配置
    * @returns {Promise} - 系统配置
    */
-  getConfig: async () =>  apiAdminGet('/api/system/config'),
+  getConfig: async () => apiAdminGet('/api/system/config'),
 
   /**
    * 更新单个配置项
@@ -52,16 +50,16 @@ export const configApi = {
   updateConfigBatch: async (items) => apiAdminPost('/api/system/config/update', items),
 
   /**
-   * 重启系统（仅超级管理员）
-   * @returns {Promise} - 重启结果
-   */
-  restartSystem: async () => apiSuperAdminPost('/api/system/restart', {}),
-
-  /**
    * 获取系统日志
+   * @param {string} levels - 可选的日志级别过滤，多个级别用逗号分隔
    * @returns {Promise} - 系统日志
    */
-  getLogs: async () =>  apiAdminGet('/api/system/logs')
+  getLogs: async (levels) => {
+    const url = levels
+      ? `/api/system/logs?levels=${encodeURIComponent(levels)}`
+      : '/api/system/logs'
+    return apiAdminGet(url)
+  }
 }
 
 // =============================================================================
@@ -79,7 +77,7 @@ export const brandApi = {
    * 重新加载信息配置
    * @returns {Promise} - 重新加载结果
    */
-  reloadInfoConfig: async () =>  apiPost('/api/system/info/reload', {}, {}, false)
+  reloadInfoConfig: async () => apiPost('/api/system/info/reload', {}, {}, false)
 }
 
 // =============================================================================
@@ -112,7 +110,9 @@ export const chatModelApi = {
    * @returns {Promise} - 模型状态
    */
   getModelStatus: async (provider, modelName) => {
-    return apiAdminGet(`/api/system/chat-models/status?provider=${encodeURIComponent(provider)}&model_name=${encodeURIComponent(modelName)}`)
+    return apiAdminGet(
+      `/api/system/chat-models/status?provider=${encodeURIComponent(provider)}&model_name=${encodeURIComponent(modelName)}`
+    )
   },
 
   /**
@@ -124,5 +124,63 @@ export const chatModelApi = {
   }
 }
 
+// =============================================================================
+// === 自定义供应商管理分组 ===
+// =============================================================================
 
+export const customProviderApi = {
+  /**
+   * 获取所有自定义供应商
+   * @returns {Promise} - 自定义供应商列表
+   */
+  getCustomProviders: async () => {
+    return apiAdminGet('/api/system/custom-providers')
+  },
 
+  /**
+   * 添加自定义供应商
+   * @param {string} providerId - 供应商ID
+   * @param {Object} providerData - 供应商配置数据
+   * @returns {Promise} - 添加结果
+   */
+  addCustomProvider: async (providerId, providerData) => {
+    return apiAdminPost('/api/system/custom-providers', {
+      provider_id: providerId,
+      provider_data: providerData
+    })
+  },
+
+  /**
+   * 更新自定义供应商
+   * @param {string} providerId - 供应商ID
+   * @param {Object} providerData - 供应商配置数据
+   * @returns {Promise} - 更新结果
+   */
+  updateCustomProvider: async (providerId, providerData) => {
+    return apiAdminPut(
+      `/api/system/custom-providers/${encodeURIComponent(providerId)}`,
+      providerData
+    )
+  },
+
+  /**
+   * 删除自定义供应商
+   * @param {string} providerId - 供应商ID
+   * @returns {Promise} - 删除结果
+   */
+  deleteCustomProvider: async (providerId) => {
+    return apiAdminDelete(`/api/system/custom-providers/${encodeURIComponent(providerId)}`)
+  },
+
+  /**
+   * 测试自定义供应商连接
+   * @param {string} providerId - 供应商ID
+   * @param {string} modelName - 要测试的模型名称
+   * @returns {Promise} - 测试结果
+   */
+  testCustomProvider: async (providerId, modelName) => {
+    return apiAdminPost(`/api/system/custom-providers/${encodeURIComponent(providerId)}/test`, {
+      model_name: modelName
+    })
+  }
+}

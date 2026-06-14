@@ -1,147 +1,55 @@
-import os
-import uuid
-from pathlib import Path
-from typing import Any, cast
+from deepagents.backends import StateBackend
+from deepagents.middleware.filesystem import FilesystemMiddleware
+from langchain.agents import create_agent
+from langchain.agents.middleware import ModelRetryMiddleware
 
-from langchain_core.messages import AIMessage, ToolMessage
-from langgraph.checkpoint.memory import InMemorySaver
-from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver, aiosqlite
-from langgraph.graph import END, START, StateGraph
-from langgraph.prebuilt import ToolNode, tools_condition
-from langgraph.runtime import Runtime
+from src.agents.common import BaseAgent, load_chat_model
+from src.agents.common.middlewares import (
+    RuntimeConfigMiddleware,
+    save_attachments_to_fs,
+)
+from src.services.mcp_service import get_tools_from_all_servers
 
-from src import config as sys_config
-from src.agents.common.agent_context import set_user_id
-from src.agents.common.base import BaseAgent
-from src.agents.common.mcp import get_mcp_tools
-from src.agents.common.models import load_chat_model
-from src.utils import logger
 
-from .context import Context
-from .state import State
-from .tools import get_tools
+def _create_fs_backend(rt):
+    """创建文件存储后端"""
+    return StateBackend(rt)
 
 
 class ChatbotAgent(BaseAgent):
     name = "智能体助手"
-    description = "基础的对话机器人，可以回答问题，默认不使用任何工具，可在配置中启用需要的工具。"
+    description = "基础的对话机器人，可以回答问题，可在配置中启用需要的工具。"
+    capabilities = ["file_upload"]  # 支持文件上传功能
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.graph = None
-        self.context_schema = Context
-        self.workdir = Path(sys_config.save_dir) / "agents" / self.module_name
-        self.workdir.mkdir(parents=True, exist_ok=True)
-        self.agent_tools = None
-
-    def get_tools(self):
-        return get_tools()
-
-    async def _get_invoke_tools(self, selected_tools: list[str], selected_mcps: list[str]):
-        """根据配置获取工具。
-        默认不使用任何工具。
-        如果配置为列表，则使用列表中的工具。
-        """
-        enabled_tools = []
-        self.agent_tools = self.agent_tools or self.get_tools()
-        if selected_tools and isinstance(selected_tools, list) and len(selected_tools) > 0:
-            # 使用配置中指定的工具
-            enabled_tools = [tool for tool in self.agent_tools if tool.name in selected_tools]
-
-        if selected_mcps and isinstance(selected_mcps, list) and len(selected_mcps) > 0:
-            for mcp in selected_mcps:
-                enabled_tools.extend(await get_mcp_tools(mcp))
-
-        return enabled_tools
-
-    async def llm_call(self, state: State, runtime: Runtime[Context] = None) -> dict[str, Any]:
-        """调用 llm 模型 - 异步版本以支持异步工具"""
-        model = load_chat_model(runtime.context.model)
-
-        # 这里要根据配置动态获取工具
-        available_tools = await self._get_invoke_tools(runtime.context.tools, runtime.context.mcps)
-        logger.info(f"LLM binded ({len(available_tools)}) available_tools: {[tool.name for tool in available_tools]}")
-
-        if available_tools:
-            model = model.bind_tools(available_tools)
-
-        # 使用异步调用
-        response = cast(
-            AIMessage,
-            await model.ainvoke([{"role": "system", "content": runtime.context.system_prompt}, *state.messages]),
-        )
-        return {"messages": [response]}
-
-    async def dynamic_tools_node(self, state: State, runtime: Runtime[Context]) -> dict[str, list[ToolMessage]]:
-        """Execute tools dynamically based on configuration.
-
-        This function gets the available tools based on the current configuration
-        and executes the requested tool calls from the last message.
-        """
-        # 设置用户上下文，以便工具可以访问
-        user_id = runtime.context.user_id
-        if user_id:
-            set_user_id(user_id)
-        
-        # Get available tools based on configuration
-        available_tools = await self._get_invoke_tools(runtime.context.tools, runtime.context.mcps)
-
-        # Create a ToolNode with the available tools
-        tool_node = ToolNode(available_tools)
-
-        # Execute the tool node
-        result = await tool_node.ainvoke(state)
-
-        return cast(dict[str, list[ToolMessage]], result)
 
     async def get_graph(self, **kwargs):
         """构建图"""
-        # if self.graph:
-        #     return self.graph
+        context = self.context_schema()
+        all_mcp_tools = (
+            await get_tools_from_all_servers()
+        )  # 因为异步加载，无法放在 RuntimeConfigMiddleware 的 __init__ 中
 
-        builder = StateGraph(State, context_schema=self.context_schema)
-        builder.add_node("chatbot", self.llm_call)
-        builder.add_node("tools", self.dynamic_tools_node)
-        builder.add_edge(START, "chatbot")
-        builder.add_conditional_edges(
-            "chatbot",
-            tools_condition,
+        # 使用 create_agent 创建智能体
+        # 注意：tools 参数由 RuntimeConfigMiddleware 在 wrap_model_call 中动态设置
+        graph = create_agent(
+            model=load_chat_model(context.model),
+            system_prompt=context.system_prompt,
+            middleware=[
+                save_attachments_to_fs,  # 附件注入提示词
+                FilesystemMiddleware(backend=_create_fs_backend),  # 文件系统后端
+                RuntimeConfigMiddleware(extra_tools=all_mcp_tools),  # 运行时配置应用（模型/工具/知识库/MCP/提示词）
+                ModelRetryMiddleware(),  # 模型重试中间件
+            ],
+            checkpointer=await self._get_checkpointer(),
         )
-        builder.add_edge("tools", "chatbot")
-        builder.add_edge("chatbot", END)
 
-        # 创建数据库连接并确保设置 checkpointer
-        try:
-            sqlite_checkpointer = AsyncSqliteSaver(await self.get_async_conn())
-            graph = builder.compile(checkpointer=sqlite_checkpointer, name=self.name)
-            self.graph = graph
-            return graph
-        except Exception as e:
-            logger.error(f"构建 Graph 设置 checkpointer 时出错: {e}, 尝试使用内存存储")
-            # 即使出错也返回一个可用的图实例，只是无法保存历史
-            checkpointer = InMemorySaver()
-            graph = builder.compile(checkpointer=checkpointer, name=self.name)
-            self.graph = graph
-            return graph
-
-    async def get_async_conn(self) -> aiosqlite.Connection:
-        """获取异步数据库连接"""
-        return await aiosqlite.connect(os.path.join(self.workdir, "aio_history.db"))
-
-    async def get_aio_memory(self) -> AsyncSqliteSaver:
-        """获取异步存储实例"""
-        return AsyncSqliteSaver(await self.get_async_conn())
+        return graph
 
 
 def main():
-    agent = ChatbotAgent(Context)
-
-    thread_id = str(uuid.uuid4())
-    config = {"configurable": {"thread_id": thread_id}}
-
-    from src.agents.utils import agent_cli
-
-    agent_cli(agent, config)
+    pass
 
 
 if __name__ == "__main__":

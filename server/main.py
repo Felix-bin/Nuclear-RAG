@@ -1,16 +1,31 @@
+import asyncio
+import time
+from collections import defaultdict, deque
+
 import uvicorn
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from server.routers import router
+from server.utils.lifespan import lifespan
 from server.utils.auth_middleware import is_public_path
 from server.utils.common_utils import setup_logging
+from server.utils.access_log_middleware import AccessLogMiddleware
 
 # 设置日志配置
 setup_logging()
 
-app = FastAPI()
+RATE_LIMIT_MAX_ATTEMPTS = 10
+RATE_LIMIT_WINDOW_SECONDS = 60
+RATE_LIMIT_ENDPOINTS = {("/api/auth/token", "POST")}
+
+# In-memory login attempt tracker to reduce brute-force exposure per worker
+_login_attempts: defaultdict[str, deque[float]] = defaultdict(deque)
+_attempt_lock = asyncio.Lock()
+
+app = FastAPI(lifespan=lifespan)
 app.include_router(router, prefix="/api")
 
 # CORS 设置
@@ -21,6 +36,51 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+def _extract_client_ip(request: Request) -> str:
+    forwarded_for = request.headers.get("x-forwarded-for")
+    if forwarded_for:
+        return forwarded_for.split(",")[0].strip()
+    if request.client:
+        return request.client.host
+    return "unknown"
+
+
+class LoginRateLimitMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        normalized_path = request.url.path.rstrip("/") or "/"
+        request_signature = (normalized_path, request.method.upper())
+
+        if request_signature in RATE_LIMIT_ENDPOINTS:
+            client_ip = _extract_client_ip(request)
+            now = time.monotonic()
+
+            async with _attempt_lock:
+                attempt_history = _login_attempts[client_ip]
+
+                while attempt_history and now - attempt_history[0] > RATE_LIMIT_WINDOW_SECONDS:
+                    attempt_history.popleft()
+
+                if len(attempt_history) >= RATE_LIMIT_MAX_ATTEMPTS:
+                    retry_after = int(max(1, RATE_LIMIT_WINDOW_SECONDS - (now - attempt_history[0])))
+                    return JSONResponse(
+                        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                        content={"detail": "登录尝试过于频繁，请稍后再试"},
+                        headers={"Retry-After": str(retry_after)},
+                    )
+
+                attempt_history.append(now)
+
+            response = await call_next(request)
+
+            if response.status_code < 400:
+                async with _attempt_lock:
+                    _login_attempts.pop(client_ip, None)
+
+            return response
+
+        return await call_next(request)
 
 
 # 鉴权中间件
@@ -56,7 +116,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+# 添加访问日志中间件（记录请求处理时间）
+app.add_middleware(AccessLogMiddleware)
+
 # 添加鉴权中间件
+app.add_middleware(LoginRateLimitMiddleware)
 app.add_middleware(AuthMiddleware)
 
 if __name__ == "__main__":

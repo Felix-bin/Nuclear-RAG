@@ -1,45 +1,23 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { secureStorage } from '@/utils/secureStorage'
+import { useAgentStore } from './agent'
 
 export const useUserStore = defineStore('user', () => {
   // 状态
   const token = ref(localStorage.getItem('user_token') || '')
-  const userId = ref(parseInt(localStorage.getItem('user_id') || '0') || null)
-  const username = ref(localStorage.getItem('username') || '')
-  const userIdLogin = ref(localStorage.getItem('user_id_login') || '') // 用于登录的user_id
-  const phoneNumber = ref(localStorage.getItem('phone_number') || '')
-  const avatar = ref(localStorage.getItem('avatar') || '')
-  const userRole = ref(localStorage.getItem('user_role') || '')
+  const userId = ref(null)
+  const username = ref('')
+  const userIdLogin = ref('')
+  const phoneNumber = ref('')
+  const avatar = ref('')
+  const userRole = ref('')
+  const departmentId = ref(null)
+  const departmentName = ref('')
 
   // 计算属性
   const isLoggedIn = computed(() => !!token.value)
   const isAdmin = computed(() => userRole.value === 'admin' || userRole.value === 'superadmin')
   const isSuperAdmin = computed(() => userRole.value === 'superadmin')
-
-  // 从加密存储恢复状态（自动登录）
-  async function bootstrap() {
-    try {
-      // 优先从加密存储读取
-      const encToken = await secureStorage.getDecrypted('user_token_secure')
-      const encUserId = await secureStorage.getDecrypted('user_id_secure')
-      const encUsername = await secureStorage.getDecrypted('username_secure')
-      const encUserRole = await secureStorage.getDecrypted('user_role_secure')
-      const encUserIdLogin = await secureStorage.getDecrypted('user_id_login_secure')
-      const encPhoneNumber = await secureStorage.getDecrypted('phone_number_secure')
-      const encAvatar = await secureStorage.getDecrypted('avatar_secure')
-
-      if (encToken) token.value = encToken
-      if (encUserId) userId.value = parseInt(encUserId) || null
-      if (encUsername) username.value = encUsername
-      if (encUserRole) userRole.value = encUserRole
-      if (encUserIdLogin) userIdLogin.value = encUserIdLogin
-      if (typeof encPhoneNumber === 'string') phoneNumber.value = encPhoneNumber
-      if (typeof encAvatar === 'string') avatar.value = encAvatar
-    } catch (e) {
-      // 保持静默失败，避免阻塞应用启动
-    }
-  }
 
   // 动作
   async function login(credentials) {
@@ -78,24 +56,11 @@ export const useUserStore = defineStore('user', () => {
       phoneNumber.value = data.phone_number || ''
       avatar.value = data.avatar || ''
       userRole.value = data.role
+      departmentId.value = data.department_id || null
+      departmentName.value = data.department_name || ''
 
-      // 保存到本地存储（密文）
-      await secureStorage.setEncrypted('user_token_secure', data.access_token)
-      await secureStorage.setEncrypted('user_id_secure', String(data.user_id))
-      await secureStorage.setEncrypted('username_secure', data.username)
-      await secureStorage.setEncrypted('user_id_login_secure', data.user_id_login)
-      await secureStorage.setEncrypted('phone_number_secure', data.phone_number || '')
-      await secureStorage.setEncrypted('avatar_secure', data.avatar || '')
-      await secureStorage.setEncrypted('user_role_secure', data.role)
-
-      // 同步保留明文键（兼容旧逻辑）；如需严格安全可移除明文
+      // 只保存 token 到本地存储
       localStorage.setItem('user_token', data.access_token)
-      localStorage.setItem('user_id', data.user_id)
-      localStorage.setItem('username', data.username)
-      localStorage.setItem('user_id_login', data.user_id_login)
-      localStorage.setItem('phone_number', data.phone_number || '')
-      localStorage.setItem('avatar', data.avatar || '')
-      localStorage.setItem('user_role', data.role)
 
       return true
     } catch (error) {
@@ -113,23 +78,15 @@ export const useUserStore = defineStore('user', () => {
     phoneNumber.value = ''
     avatar.value = ''
     userRole.value = ''
+    departmentId.value = null
+    departmentName.value = ''
 
-    // 清除本地存储（密文与明文）
-    secureStorage.remove('user_token_secure')
-    secureStorage.remove('user_id_secure')
-    secureStorage.remove('username_secure')
-    secureStorage.remove('user_id_login_secure')
-    secureStorage.remove('phone_number_secure')
-    secureStorage.remove('avatar_secure')
-    secureStorage.remove('user_role_secure')
+    // 清除 agentStore 状态，确保重新登录时能正确加载数据
+    const agentStore = useAgentStore()
+    agentStore.reset()
 
+    // 只清除 token
     localStorage.removeItem('user_token')
-    localStorage.removeItem('user_id')
-    localStorage.removeItem('username')
-    localStorage.removeItem('user_id_login')
-    localStorage.removeItem('phone_number')
-    localStorage.removeItem('avatar')
-    localStorage.removeItem('user_role')
   }
 
   async function initialize(admin) {
@@ -157,23 +114,11 @@ export const useUserStore = defineStore('user', () => {
       phoneNumber.value = data.phone_number || ''
       avatar.value = data.avatar || ''
       userRole.value = data.role
+      departmentId.value = data.department_id || null
+      departmentName.value = data.department_name || ''
 
-      // 保存到本地存储（密文与明文）
-      await secureStorage.setEncrypted('user_token_secure', data.access_token)
-      await secureStorage.setEncrypted('user_id_secure', String(data.user_id))
-      await secureStorage.setEncrypted('username_secure', data.username)
-      await secureStorage.setEncrypted('user_id_login_secure', data.user_id_login)
-      await secureStorage.setEncrypted('phone_number_secure', data.phone_number || '')
-      await secureStorage.setEncrypted('avatar_secure', data.avatar || '')
-      await secureStorage.setEncrypted('user_role_secure', data.role)
-
+      // 只保存 token 到本地存储
       localStorage.setItem('user_token', data.access_token)
-      localStorage.setItem('user_id', data.user_id)
-      localStorage.setItem('username', data.username)
-      localStorage.setItem('user_id_login', data.user_id_login)
-      localStorage.setItem('phone_number', data.phone_number || '')
-      localStorage.setItem('avatar', data.avatar || '')
-      localStorage.setItem('user_role', data.role)
 
       return true
     } catch (error) {
@@ -193,38 +138,10 @@ export const useUserStore = defineStore('user', () => {
     }
   }
 
-  // 公开注册普通用户（手机号为可选）
-  async function register(userData) {
-    try {
-      const response = await fetch('/api/auth/register', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          username: userData.username,
-          password: userData.password,
-          phone_number: userData.phone_number || null
-        })
-      })
-
-      if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.detail || '注册失败')
-      }
-
-      const data = await response.json()
-      return data
-    } catch (error) {
-      console.error('注册错误:', error)
-      throw error
-    }
-  }
-
   // 用于API请求的授权头
   function getAuthHeaders() {
     return {
-      'Authorization': `Bearer ${token.value}`
+      Authorization: `Bearer ${token.value}`
     }
   }
 
@@ -304,19 +221,10 @@ export const useUserStore = defineStore('user', () => {
       })
 
       if (!response.ok) {
-        // 兼容后端返回非JSON错误（例如500返回HTML）
-        let message = '删除用户失败'
-        try {
-          const errJson = await response.json()
-          message = errJson.detail || errJson.message || message
-        } catch (_) {
-          const errText = await response.text()
-          if (errText) message = errText
-        }
-        throw new Error(message)
+        const error = await response.json()
+        throw new Error(error.detail || '删除用户失败')
       }
 
-      // 正常返回JSON
       return await response.json()
     } catch (error) {
       console.error('删除用户错误:', error)
@@ -371,7 +279,6 @@ export const useUserStore = defineStore('user', () => {
 
       // 更新本地头像状态
       avatar.value = data.avatar_url
-      localStorage.setItem('avatar', data.avatar_url)
 
       return data
     } catch (error) {
@@ -396,18 +303,14 @@ export const useUserStore = defineStore('user', () => {
       const userData = await response.json()
 
       // 更新本地状态
+      userId.value = userData.id
       username.value = userData.username
       userIdLogin.value = userData.user_id
       phoneNumber.value = userData.phone_number || ''
       avatar.value = userData.avatar || ''
       userRole.value = userData.role
-
-      // 更新本地存储
-      localStorage.setItem('username', userData.username)
-      localStorage.setItem('user_id_login', userData.user_id)
-      localStorage.setItem('phone_number', userData.phone_number || '')
-      localStorage.setItem('avatar', userData.avatar || '')
-      localStorage.setItem('user_role', userData.role)
+      departmentId.value = userData.department_id || null
+      departmentName.value = userData.department_name || ''
 
       return userData
     } catch (error) {
@@ -438,11 +341,9 @@ export const useUserStore = defineStore('user', () => {
       // 更新本地状态
       if (typeof userData.username === 'string') {
         username.value = userData.username
-        localStorage.setItem('username', userData.username)
       }
       if (typeof userData.phone_number !== 'undefined') {
         phoneNumber.value = userData.phone_number || ''
-        localStorage.setItem('phone_number', userData.phone_number || '')
       }
 
       return userData
@@ -461,6 +362,8 @@ export const useUserStore = defineStore('user', () => {
     phoneNumber,
     avatar,
     userRole,
+    departmentId,
+    departmentName,
 
     // 计算属性
     isLoggedIn,
@@ -468,11 +371,9 @@ export const useUserStore = defineStore('user', () => {
     isSuperAdmin,
 
     // 方法
-    bootstrap,
     login,
     logout,
     initialize,
-    register,
     checkFirstRun,
     getAuthHeaders,
     getUsers,
@@ -498,9 +399,5 @@ export const checkAdminPermission = () => {
 // 检查当前用户是否有超级管理员权限
 export const checkSuperAdminPermission = () => {
   const userStore = useUserStore()
-  if (!userStore.isSuperAdmin) {
-    throw new Error('需要超级管理员权限')
-  }
-  return true
+  return userStore.isSuperAdmin
 }
-// 此处的 register 函数已移动到 store 内部，删除外部重复定义

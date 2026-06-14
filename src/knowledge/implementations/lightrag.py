@@ -1,21 +1,20 @@
 import os
 import traceback
-from datetime import datetime
+from functools import partial
 
 from lightrag import LightRAG, QueryParam
 from lightrag.kg.shared_storage import initialize_pipeline_status
 from lightrag.llm.openai import openai_complete_if_cache, openai_embed
-from lightrag.utils import EmbeddingFunc, setup_logger
+from lightrag.utils import EmbeddingFunc
 from neo4j import GraphDatabase
 from pymilvus import connections, utility
 
-from src.knowledge.base import KnowledgeBase
-from src.knowledge.indexing import process_file_to_markdown, process_url_to_markdown
-from src.knowledge.utils.kb_utils import get_embedding_config, prepare_item_metadata
+from src import config
+from src.knowledge.base import FileStatus, KnowledgeBase
+from src.knowledge.indexing import process_file_to_markdown
+from src.knowledge.utils.kb_utils import get_embedding_config
 from src.utils import hashstr, logger
-
-LIGHTRAG_LLM_PROVIDER = os.getenv("LIGHTRAG_LLM_PROVIDER", "siliconflow")
-LIGHTRAG_LLM_NAME = os.getenv("LIGHTRAG_LLM_NAME", "zai-org/GLM-4.5-Air")
+from src.utils.datetime_utils import utc_isoformat
 
 
 class LightRagKB(KnowledgeBase):
@@ -34,13 +33,6 @@ class LightRagKB(KnowledgeBase):
         # 存储 LightRAG 实例映射 {db_id: LightRAG}
         self.instances: dict[str, LightRAG] = {}
 
-        # 设置 LightRAG 日志
-        log_dir = os.path.join(work_dir, "logs", "lightrag")
-        os.makedirs(log_dir, exist_ok=True)
-        setup_logger(
-            "lightrag", log_file_path=os.path.join(log_dir, f"lightrag_{datetime.now().strftime('%Y-%m-%d')}.log")
-        )
-
         logger.info("LightRagKB initialized")
 
     @property
@@ -52,8 +44,8 @@ class LightRagKB(KnowledgeBase):
         """删除数据库，同时清除Milvus和Neo4j中的数据"""
         # Drop Milvus collection
         try:
-            milvus_uri = os.getenv("MILVUS_URI", "http://localhost:19530")
-            milvus_token = os.getenv("MILVUS_TOKEN", "")
+            milvus_uri = os.getenv("MILVUS_URI") or "http://localhost:19530"
+            milvus_token = os.getenv("MILVUS_TOKEN") or ""
             connection_alias = f"lightrag_{hashstr(db_id, 6)}"
 
             connections.connect(alias=connection_alias, uri=milvus_uri, token=milvus_token)
@@ -72,9 +64,9 @@ class LightRagKB(KnowledgeBase):
             logger.error(f"Failed to drop Milvus collection {db_id}: {e}")
 
         # Delete Neo4j data
-        neo4j_uri = os.getenv("NEO4J_URI", "bolt://localhost:7687")
-        neo4j_username = os.getenv("NEO4J_USERNAME", "neo4j")
-        neo4j_password = os.getenv("NEO4J_PASSWORD", "0123456789")
+        neo4j_uri = os.getenv("NEO4J_URI") or "bolt://localhost:7687"
+        neo4j_username = os.getenv("NEO4J_USERNAME") or "neo4j"
+        neo4j_password = os.getenv("NEO4J_PASSWORD") or "0123456789"
 
         try:
             driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_username, neo4j_password))
@@ -117,7 +109,7 @@ class LightRagKB(KnowledgeBase):
         if isinstance(metadata.get("language"), str) and metadata.get("language"):
             addon_params.setdefault("language", metadata.get("language"))
         # 默认语言从环境变量读取，默认 English
-        addon_params.setdefault("language", os.getenv("SUMMARY_LANGUAGE", "English"))
+        addon_params.setdefault("language", os.getenv("SUMMARY_LANGUAGE") or "English")
 
         # 创建工作目录
         working_dir = os.path.join(self.work_dir, db_id)
@@ -173,16 +165,17 @@ class LightRagKB(KnowledgeBase):
         from src.models import select_model
 
         # 如果用户选择了LLM，使用用户选择的；否则使用环境变量默认值
-        if llm_info and llm_info.get("provider") and llm_info.get("model_name"):
-            provider = llm_info["provider"]
-            model_name = llm_info["model_name"]
-            logger.info(f"Using user-selected LLM: {provider}/{model_name}")
+        if llm_info and llm_info.get("model_spec"):
+            model_spec = llm_info["model_spec"]
+            logger.info(f"Using user-selected LLM spec: {model_spec}")
+        elif llm_info and llm_info.get("provider") and llm_info.get("model_name"):
+            model_spec = f"{llm_info['provider']}/{llm_info['model_name']}"
+            logger.info(f"Using user-selected LLM: {model_spec}")
         else:
-            provider = LIGHTRAG_LLM_PROVIDER
-            model_name = LIGHTRAG_LLM_NAME
-            logger.info(f"Using default LLM from environment: {provider}/{model_name}")
+            model_spec = config.default_model
+            logger.info(f"Using default LLM from environment: {model_spec}")
 
-        model = select_model(provider, model_name)
+        model = select_model(model_spec=model_spec)
 
         async def llm_model_func(prompt, system_prompt=None, history_messages=[], **kwargs):
             return await openai_complete_if_cache(
@@ -200,20 +193,57 @@ class LightRagKB(KnowledgeBase):
     def _get_embedding_func(self, embed_info: dict):
         """获取 embedding 函数"""
         config_dict = get_embedding_config(embed_info)
+        logger.debug(f"Embedding config dict: {config_dict}")
 
+        if config_dict.get("model_id") and config_dict["model_id"].startswith("ollama"):
+            from lightrag.llm.ollama import ollama_embed
+
+            from src.utils import get_docker_safe_url
+
+            host = get_docker_safe_url(config_dict["base_url"].replace("/api/embed", ""))
+            logger.debug(f"Ollama host: {host}")
+            return EmbeddingFunc(
+                embedding_dim=config_dict["dimension"],
+                max_token_size=8192,
+                func=lambda texts: ollama_embed(
+                    texts=texts,
+                    embed_model=config_dict["name"],
+                    api_key=config_dict["api_key"],
+                    host=host,
+                ),
+            )
+
+        # 尝试获取模型名称，支持多种键名以保持兼容性
+        if "name" in config_dict and config_dict["name"]:
+            model_name = config_dict["name"]
+        elif "model" in config_dict and config_dict["model"]:
+            model_name = config_dict["model"]
+        else:
+            raise ValueError(f"Neither 'name' nor 'model' found in config_dict or both are empty: {config_dict}")
         return EmbeddingFunc(
             embedding_dim=config_dict["dimension"],
-            max_token_size=4096,
-            func=lambda texts: openai_embed(
-                texts=texts,
-                model=config_dict["model"],
+            max_token_size=8192,
+            model_name=model_name,
+            func=partial(
+                openai_embed.func,
+                model=model_name,
                 api_key=config_dict["api_key"],
                 base_url=config_dict["base_url"].replace("/embeddings", ""),
             ),
         )
 
-    async def add_content(self, db_id: str, items: list[str], params: dict | None = None) -> list[dict]:
-        """添加内容（文件/URL）"""
+    async def index_file(self, db_id: str, file_id: str, operator_id: str | None = None) -> dict:
+        """
+        Index parsed file (Status: INDEXING -> INDEXED/ERROR_INDEXING)
+
+        Args:
+            db_id: Database ID
+            file_id: File ID
+            operator_id: ID of the user performing the operation
+
+        Returns:
+            Updated file metadata
+        """
         if db_id not in self.databases_meta:
             raise ValueError(f"Database {db_id} not found")
 
@@ -221,91 +251,233 @@ class LightRagKB(KnowledgeBase):
         if not rag:
             raise ValueError(f"Failed to get LightRAG instance for {db_id}")
 
-        content_type = params.get("content_type", "file") if params else "file"
+        # Get file meta
+        if file_id not in self.files_meta:
+            raise ValueError(f"File {file_id} not found")
+        file_meta = self.files_meta[file_id]
+
+        # Validate current status - only allow indexing from these states
+        current_status = file_meta.get("status")
+        allowed_statuses = {
+            FileStatus.PARSED,
+            FileStatus.ERROR_INDEXING,
+            FileStatus.INDEXED,  # For re-indexing
+            "done",  # Legacy status
+        }
+
+        if current_status not in allowed_statuses:
+            raise ValueError(
+                f"Cannot index file with status '{current_status}'. "
+                f"File must be parsed first (status should be one of: {', '.join(allowed_statuses)})"
+            )
+
+        # Check markdown file exists
+        if not file_meta.get("markdown_file"):
+            raise ValueError("File has not been parsed yet (no markdown_file)")
+
+        # Clear previous error if any
+        if "error" in file_meta:
+            self.files_meta[file_id].pop("error", None)
+
+        # Update status and add to processing queue
+        self.files_meta[file_id]["status"] = FileStatus.INDEXING
+        self.files_meta[file_id]["updated_at"] = utc_isoformat()
+        if operator_id:
+            self.files_meta[file_id]["updated_by"] = operator_id
+        await self._persist_file(file_id)
+
+        # Add to processing queue
+        self._add_to_processing_queue(file_id)
+
+        try:
+            # Read markdown
+            markdown_content = await self._read_markdown_from_minio(file_meta["markdown_file"])
+            file_path = file_meta.get("path")
+
+            # Clean up existing chunks if any (for re-indexing)
+            await self.delete_file_chunks_only(db_id, file_id)
+
+            # Insert
+            await rag.ainsert(input=markdown_content, ids=file_id, file_paths=file_path)
+
+            logger.info(f"Indexed file {file_id} into LightRAG")
+
+            # Update status
+            self.files_meta[file_id]["status"] = FileStatus.INDEXED
+            self.files_meta[file_id]["updated_at"] = utc_isoformat()
+            if operator_id:
+                self.files_meta[file_id]["updated_by"] = operator_id
+            await self._persist_file(file_id)
+
+            return self.files_meta[file_id]
+
+        except Exception as e:
+            logger.error(f"Indexing failed for {file_id}: {e}")
+            self.files_meta[file_id]["status"] = FileStatus.ERROR_INDEXING
+            self.files_meta[file_id]["error"] = str(e)
+            self.files_meta[file_id]["updated_at"] = utc_isoformat()
+            if operator_id:
+                self.files_meta[file_id]["updated_by"] = operator_id
+            await self._persist_file(file_id)
+            raise
+
+        finally:
+            # Remove from processing queue
+            self._remove_from_processing_queue(file_id)
+
+    async def update_content(self, db_id: str, file_ids: list[str], params: dict | None = None) -> list[dict]:
+        """更新内容 - 根据file_ids重新解析文件并更新向量库"""
+        if db_id not in self.databases_meta:
+            raise ValueError(f"Database {db_id} not found")
+
+        rag = await self._get_lightrag_instance(db_id)
+        if not rag:
+            raise ValueError(f"Failed to get LightRAG instance for {db_id}")
+
+        # 处理默认参数
+        if params is None:
+            params = {}
+        content_type = params.get("content_type", "file")
         processed_items_info = []
 
-        for item in items:
-            # 准备文件元数据
-            metadata = prepare_item_metadata(item, content_type, db_id)
-            file_id = metadata["file_id"]
-            item_path = metadata["path"]
+        for file_id in file_ids:
+            # 从元数据中获取文件信息
+            if file_id not in self.files_meta:
+                logger.warning(f"File {file_id} not found in metadata, skipping")
+                continue
 
-            # 添加文件记录
-            file_record = metadata.copy()
-            self.files_meta[file_id] = file_record
-            self._save_metadata()
+            file_meta = self.files_meta[file_id]
+            file_path = file_meta.get("path")
 
+            if not file_path:
+                logger.warning(f"File path not found for {file_id}, skipping")
+                continue
+
+            # 添加到处理队列
             self._add_to_processing_queue(file_id)
+
             try:
-                # 根据内容类型处理内容
-                if content_type == "file":
-                    markdown_content = await process_file_to_markdown(item, params=params)
-                    markdown_content_lines = markdown_content[:100].replace("\n", " ")
-                    logger.info(f"Markdown content: {markdown_content_lines}...")
-                    pdf_path = None
-                else:  # URL
-                    # 对于URL，如果转换为PDF，需要保存PDF文件到知识库目录
-                    upload_dir = self.get_db_upload_path(db_id)
-                    os.makedirs(upload_dir, exist_ok=True)
-                    # 生成PDF文件名（使用URL本身）
-                    from src.utils import url_to_filename
-                    pdf_filename = url_to_filename(item)
-                    target_pdf_path = os.path.join(upload_dir, pdf_filename)
-                    
-                    markdown_content, pdf_path = await process_url_to_markdown(item, params=params, target_pdf_path=target_pdf_path)
-                    
-                    # 如果PDF文件已保存，更新元数据中的文件路径
-                    if pdf_path and os.path.exists(pdf_path):
-                        async with self._metadata_lock:
-                            self.files_meta[file_id]["path"] = pdf_path
-                            self.files_meta[file_id]["file_type"] = "pdf"
-                            self.files_meta[file_id]["filename"] = pdf_filename
-                            self._save_metadata()
-                        logger.info(f"[{file_id}] PDF文件已保存到: {pdf_path}")
+                # 更新状态为处理中
+                self.files_meta[file_id]["processing_params"] = params.copy()
+                self.files_meta[file_id]["status"] = "processing"
+                await self._persist_file(file_id)
 
-                # 使用 LightRAG 插入内容
-                await rag.ainsert(input=markdown_content, ids=file_id, file_paths=item_path)
+                # 重新解析文件为 markdown
+                if content_type != "file":
+                    raise ValueError("URL 内容解析已禁用")
+                markdown_content = await process_file_to_markdown(file_path, params=params)
+                markdown_content_lines = markdown_content[:100].replace("\n", " ")
+                logger.info(f"Markdown content: {markdown_content_lines}...")
 
-                logger.info(f"Inserted {content_type} {item} into LightRAG. Done.")
+                # 先删除现有的 LightRAG 数据（仅删除chunks，保留元数据）
+                await self.delete_file_chunks_only(db_id, file_id)
 
-                # 更新状态为完成
+                # 使用 LightRAG 重新插入内容
+                await rag.ainsert(input=markdown_content, ids=file_id, file_paths=file_path)
+
+                logger.info(f"Updated {content_type} {file_path} in LightRAG. Done.")
+
+                # 更新元数据状态
                 self.files_meta[file_id]["status"] = "done"
-                self._save_metadata()
-                file_record["status"] = "done"
+                await self._persist_file(file_id)
+
+                # 从处理队列中移除
+                self._remove_from_processing_queue(file_id)
+
+                # 返回更新后的文件信息
+                updated_file_meta = file_meta.copy()
+                updated_file_meta["status"] = "done"
+                updated_file_meta["file_id"] = file_id
+                processed_items_info.append(updated_file_meta)
 
             except Exception as e:
                 error_msg = str(e)
-                logger.error(f"处理{content_type} {item} 失败: {error_msg}, {traceback.format_exc()}")
+                logger.error(f"更新{content_type} {file_path} 失败: {error_msg}, {traceback.format_exc()}")
                 self.files_meta[file_id]["status"] = "failed"
                 self.files_meta[file_id]["error"] = error_msg
-                self._save_metadata()
-                file_record["status"] = "failed"
-                file_record["error"] = error_msg
-            finally:
+                await self._persist_file(file_id)
+
+                # 从处理队列中移除
                 self._remove_from_processing_queue(file_id)
 
-            processed_items_info.append(file_record)
+                # 返回失败的文件信息
+                failed_file_meta = file_meta.copy()
+                failed_file_meta["status"] = "failed"
+                failed_file_meta["file_id"] = file_id
+                failed_file_meta["error"] = error_msg
+                processed_items_info.append(failed_file_meta)
 
         return processed_items_info
 
-    async def aquery(self, query_text: str, db_id: str, **kwargs) -> str:
+    async def aquery(self, query_text: str, db_id: str, agent_call: bool = False, **kwargs) -> str:
         """异步查询知识库"""
         rag = await self._get_lightrag_instance(db_id)
         if not rag:
             raise ValueError(f"Database {db_id} not found")
 
         try:
+            # QueryParam 支持的参数列表
+            valid_params = {
+                "mode",
+                "only_need_context",
+                "only_need_prompt",
+                "response_type",
+                "stream",
+                "top_k",
+                "chunk_top_k",
+                "max_entity_tokens",
+                "max_relation_tokens",
+                "max_total_tokens",
+                "hl_keywords",
+                "ll_keywords",
+                "conversation_history",
+                "history_turns",
+                "model_func",
+                "user_prompt",
+                "enable_rerank",
+                "include_references",
+            }
+
+            # 过滤 kwargs，只保留 QueryParam 支持的参数
+            query_params = self._get_query_params(db_id)
+            query_params = query_params | kwargs
+            filtered_kwargs = {k: v for k, v in query_params.items() if k in valid_params}
+
             # 设置查询参数
             params_dict = {
                 "mode": "mix",
                 "only_need_context": True,
                 "top_k": 10,
-            } | kwargs
+            } | filtered_kwargs
             param = QueryParam(**params_dict)
 
             # 执行查询
-            response = await rag.aquery(query_text, param)
-            logger.debug(f"Query response: {response}")
+            response = await rag.aquery_data(query_text, param)
+            logger.debug(f"Query response: {str(response)[:1000]}...")
+
+            if agent_call:
+                scope = query_params.get("retrieval_content_scope", "chunks")
+                data = response.get("data", {}) or {}
+
+                if scope == "chunks":
+                    return data.get("chunks", [])
+
+                result = {}
+                if scope in ["graph", "all"]:
+                    # 过滤掉无关信息，保留实体和关系的核心内容
+                    exclude_keys = {"source_id", "file_path", "created_at"}
+
+                    ents = data.get("entities", [])
+                    rels = data.get("relationships", [])
+
+                    result["entities"] = [{k: v for k, v in e.items() if k not in exclude_keys} for e in ents]
+                    result["relationships"] = [{k: v for k, v in r.items() if k not in exclude_keys} for r in rels]
+                    result["references"] = data.get("references", [])
+
+                if scope == "all":
+                    result["chunks"] = data.get("chunks", [])
+
+                return result
 
             return response
 
@@ -313,20 +485,29 @@ class LightRagKB(KnowledgeBase):
             logger.error(f"Query error: {e}, {traceback.format_exc()}")
             return ""
 
-    async def delete_file(self, db_id: str, file_id: str) -> None:
-        """删除文件"""
+    async def delete_file_chunks_only(self, db_id: str, file_id: str) -> None:
+        """仅删除文件的chunks数据，保留元数据（用于更新操作）"""
         rag = await self._get_lightrag_instance(db_id)
         if rag:
             try:
                 # 使用 LightRAG 删除文档
                 await rag.adelete_by_doc_id(file_id)
+                logger.info(f"Deleted chunks for file {file_id} from LightRAG")
             except Exception as e:
                 logger.error(f"Error deleting file {file_id} from LightRAG: {e}")
+        # 注意：这里不删除 files_meta[file_id]，保留元数据用于后续操作
+
+    async def delete_file(self, db_id: str, file_id: str) -> None:
+        """删除文件（包括元数据）"""
+        # 先删除 LightRAG 中的 chunks 数据
+        await self.delete_file_chunks_only(db_id, file_id)
 
         # 删除文件记录
         if file_id in self.files_meta:
             del self.files_meta[file_id]
-            self._save_metadata()
+            from src.repositories.knowledge_file_repository import KnowledgeFileRepository
+
+            await KnowledgeFileRepository().delete(file_id)
 
     async def get_file_basic_info(self, db_id: str, file_id: str) -> dict:
         """获取文件基本信息（仅元数据）"""
@@ -346,8 +527,12 @@ class LightRagKB(KnowledgeBase):
         if rag:
             try:
                 # 获取文档的所有 chunks
-                assert hasattr(rag.text_chunks, "get_all"), "text_chunks does not have get_all method"
-                all_chunks = await rag.text_chunks.get_all()  # type: ignore
+                # LightRAG v1.4+ 使用 JsonKVStorage，通过 _data 属性访问所有数据
+                if hasattr(rag.text_chunks, "_data"):
+                    all_chunks = dict(rag.text_chunks._data)
+                else:
+                    logger.warning("text_chunks does not have _data attribute, cannot get file content")
+                    return content_info
 
                 # 筛选属于该文档的 chunks
                 doc_chunks = []
@@ -360,12 +545,19 @@ class LightRagKB(KnowledgeBase):
                 # 按 chunk_order_index 排序
                 doc_chunks.sort(key=lambda x: x.get("chunk_order_index", 0))
                 content_info["lines"] = doc_chunks
-                return content_info
 
             except Exception as e:
                 logger.error(f"Failed to get file content from LightRAG: {e}")
                 content_info["lines"] = []
-                return content_info
+
+        # Try to read markdown content if available
+        file_meta = self.files_meta[file_id]
+        if file_meta.get("markdown_file"):
+            try:
+                content = await self._read_markdown_from_minio(file_meta["markdown_file"])
+                content_info["content"] = content
+            except Exception as e:
+                logger.error(f"Failed to read markdown file for {file_id}: {e}")
 
         return content_info
 
@@ -380,27 +572,59 @@ class LightRagKB(KnowledgeBase):
 
         return {**basic_info, **content_info}
 
-    async def update_file_name(self, db_id: str, file_id: str, new_filename: str) -> dict:
-        """更新文件名"""
-        if file_id not in self.files_meta:
-            raise Exception(f"File not found: {file_id}")
+    def get_query_params_config(self, db_id: str, **kwargs) -> dict:
+        """获取 LightRAG 知识库的查询参数配置"""
+        options = [
+            {
+                "key": "mode",
+                "label": "检索模式",
+                "type": "select",
+                "default": "mix",
+                "options": [
+                    {"value": "local", "label": "Local", "description": "上下文相关信息"},
+                    {"value": "global", "label": "Global", "description": "全局知识"},
+                    {"value": "hybrid", "label": "Hybrid", "description": "本地和全局混合"},
+                    {"value": "naive", "label": "Naive", "description": "基本搜索"},
+                    {"value": "mix", "label": "Mix", "description": "知识图谱和向量检索混合"},
+                ],
+            },
+            {
+                "key": "only_need_context",
+                "label": "只使用上下文",
+                "type": "boolean",
+                "default": True,
+                "description": "只返回上下文，不生成回答",
+            },
+            {
+                "key": "only_need_prompt",
+                "label": "只使用提示",
+                "type": "boolean",
+                "default": False,
+                "description": "只返回提示，不进行检索",
+            },
+            {
+                "key": "top_k",
+                "label": "TopK",
+                "type": "number",
+                "default": 10,
+                "min": 1,
+                "max": 100,
+                "description": "返回的最大结果数量",
+            },
+            {
+                "key": "retrieval_content_scope",
+                "label": "传递给 LLM 的内容",
+                "type": "select",
+                "default": "chunks",
+                "options": [
+                    {"value": "chunks", "label": "仅 Chunks", "description": "仅返回文档片段"},
+                    {"value": "graph", "label": "仅 Entity/Relation", "description": "仅返回知识图谱信息"},
+                    {"value": "all", "label": "全部", "description": "返回文档片段和知识图谱信息"},
+                ],
+            },
+        ]
 
-        # 验证文件属于该数据库
-        if self.files_meta[file_id].get("database_id") != db_id:
-            raise Exception(f"File {file_id} does not belong to database {db_id}")
-
-        # 使用锁确保元数据操作的原子性
-        async with self._metadata_lock:
-            self.files_meta[file_id]["filename"] = new_filename
-            self._save_metadata()
-
-        return await self.get_file_basic_info(db_id, file_id)
-
-    async def update_chunk_content(self, db_id: str, file_id: str, chunk_id: str, new_content: str) -> dict:
-        """更新chunk内容"""
-        # LightRAG的实现比较复杂，暂时抛出NotImplementedError
-        # TODO: 实现LightRAG的chunk更新功能
-        raise NotImplementedError("LightRAG知识库的chunk更新功能尚未实现")
+        return {"type": "lightrag", "options": options}
 
     async def export_data(self, db_id: str, format: str = "csv", **kwargs) -> str:
         """

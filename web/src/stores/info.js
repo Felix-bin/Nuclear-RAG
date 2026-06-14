@@ -8,33 +8,40 @@ export const useInfoStore = defineStore('info', () => {
   const isLoading = ref(false)
   const isLoaded = ref(false)
   const debugMode = ref(false)
+  const error = ref(null) // 错误信息
 
   // 计算属性 - 组织信息
-  const organization = computed(() => infoConfig.value.organization || {
-    name: "StackSolve",
-    logo: "/logo.png",
-    avatar: "/logo.png"
-  })
+  const organization = computed(
+    () =>
+      infoConfig.value.organization || {
+        name: '',
+        logo: '',
+        avatar: ''
+      }
+  )
 
   // 计算属性 - 品牌信息
-  const branding = computed(() => infoConfig.value.branding || {
-    name: "StackSolve - 栈问速解",
-    title: "StackSolve - 栈问速解",
-    subtitle: "大模型驱动的知识库管理工具",
-    description: "结合知识库与知识图谱，提供更准确、更全面的回答"
-  })
+  const branding = computed(
+    () =>
+      infoConfig.value.branding || {
+        name: '',
+        title: '',
+        subtitle: ''
+      }
+  )
 
   // 计算属性 - 功能特性
-  const features = computed(() => infoConfig.value.features || [
-    "📚 灵活知识库",
-    "🕸️ 知识图谱集成",
-    "🤖 多模型支持"
-  ])
+  const features = computed(() => infoConfig.value.features || [])
+
+  const actions = computed(() => infoConfig.value.actions || [])
 
   // 计算属性 - 页脚信息
-  const footer = computed(() => infoConfig.value.footer || {
-    copyright: "© StackSolve 2025 [WIP] v0.12.138"
-  })
+  const footer = computed(
+    () =>
+      infoConfig.value.footer || {
+        copyright: ''
+      }
+  )
 
   // 动作方法
   function setInfoConfig(newConfig) {
@@ -97,7 +104,7 @@ export const useInfoStore = defineStore('info', () => {
     }
   }
 
-    return {
+  return {
     // 状态
     infoConfig,
     isLoading,
@@ -109,6 +116,7 @@ export const useInfoStore = defineStore('info', () => {
     branding,
     features,
     footer,
+    actions,
 
     // 方法
     setInfoConfig,

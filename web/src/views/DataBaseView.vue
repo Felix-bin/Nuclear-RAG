@@ -1,23 +1,30 @@
 <template>
   <div class="database-container layout-container">
-    <HeaderComponent title="文档知识库" :loading="state.loading">
+    <HeaderComponent title="文档知识库" :loading="dbState.listLoading">
       <template #actions>
-        <a-button type="primary" @click="state.openNewDatabaseModel=true">
-          新建知识库
-        </a-button>
+        <a-button type="primary" @click="state.openNewDatabaseModel = true"> 新建知识库 </a-button>
       </template>
     </HeaderComponent>
 
-    <a-modal :open="state.openNewDatabaseModel" title="新建知识库" @ok="createDatabase" @cancel="cancelCreateDatabase" class="new-database-modal" width="800px">
-
+    <a-modal
+      :open="state.openNewDatabaseModel"
+      title="新建知识库"
+      :confirm-loading="dbState.creating"
+      @ok="handleCreateDatabase"
+      @cancel="cancelCreateDatabase"
+      class="new-database-modal"
+      width="800px"
+      destroyOnClose
+    >
       <!-- 知识库类型选择 -->
-      <h3>知识库类型<span style="color: var(--error-color)">*</span></h3>
+      <h3>知识库类型<span style="color: var(--color-error-500)">*</span></h3>
       <div class="kb-type-cards">
         <div
-          v-for="(typeInfo, typeKey) in supportedKbTypes"
+          v-for="(typeInfo, typeKey) in orderedKbTypes"
           :key="typeKey"
           class="kb-type-card"
           :class="{ active: newDatabase.kb_type === typeKey }"
+          :data-type="typeKey"
           @click="handleKbTypeChange(typeKey)"
         >
           <div class="card-header">
@@ -25,9 +32,6 @@
             <span class="type-title">{{ getKbTypeLabel(typeKey) }}</span>
           </div>
           <div class="card-description">{{ typeInfo.description }}</div>
-          <div class="card-features">
-            <span class="feature-tag">{{ getKbTypeFeature(typeKey) }}</span>
-          </div>
         </div>
       </div>
 
@@ -41,68 +45,115 @@
         />
       </div> -->
 
-      <h3>知识库名称<span style="color: var(--error-color)">*</span></h3>
+      <h3>知识库名称<span style="color: var(--color-error-500)">*</span></h3>
       <a-input v-model:value="newDatabase.name" placeholder="新建知识库名称" size="large" />
 
       <h3>嵌入模型</h3>
-      <a-select v-model:value="newDatabase.embed_model_name" :options="embedModelOptions" style="width: 100%;" size="large" />
+      <EmbeddingModelSelector
+        v-model:value="newDatabase.embed_model_name"
+        style="width: 100%"
+        size="large"
+        placeholder="请选择嵌入模型"
+      />
 
       <!-- 仅对 LightRAG 提供语言选择和LLM选择 -->
       <div v-if="newDatabase.kb_type === 'lightrag'">
-        <h3 style="margin-top: 20px;">语言</h3>
+        <h3 style="margin-top: 20px">语言</h3>
         <a-select
           v-model:value="newDatabase.language"
           :options="languageOptions"
-          style="width: 100%;"
+          style="width: 100%"
           size="large"
           :dropdown-match-select-width="false"
         />
 
-        <h3 style="margin-top: 20px;">语言模型 (LLM)</h3>
-        <p style="color: var(--gray-700); font-size: 14px;">可以在设置中配置语言模型</p>
+        <h3 style="margin-top: 20px">语言模型 (LLM)</h3>
+        <p style="color: var(--gray-700); font-size: 14px">可以在设置中配置语言模型</p>
         <ModelSelectorComponent
-          :model_name="newDatabase.llm_info.model_name || '请选择模型'"
-          :model_provider="newDatabase.llm_info.provider || ''"
+          :model_spec="llmModelSpec"
+          placeholder="请选择模型"
           @select-model="handleLLMSelect"
-          style="width: 100%; height: 60px;"
+          size="large"
+          style="width: 100%; height: 60px"
         />
       </div>
 
-      <h3 style="margin-top: 20px;">知识库描述</h3>
-      <p style="color: var(--gray-700); font-size: 14px;">在智能体流程中，这里的描述会作为工具的描述。智能体会根据知识库的标题和描述来选择合适的工具。所以这里描述的越详细，智能体越容易选择到合适的工具。</p>
-      <a-textarea
-        v-model:value="newDatabase.description"
+      <h3 style="margin-top: 20px">知识库描述</h3>
+      <p style="color: var(--gray-700); font-size: 14px">
+        在智能体流程中，这里的描述会作为工具的描述。智能体会根据知识库的标题和描述来选择合适的工具。所以这里描述的越详细，智能体越容易选择到合适的工具。
+      </p>
+      <AiTextarea
+        v-model="newDatabase.description"
+        :name="newDatabase.name"
         placeholder="新建知识库描述"
-        :auto-size="{ minRows: 5, maxRows: 10 }"
+        :auto-size="{ minRows: 3, maxRows: 10 }"
       />
+
+      <!-- 隐私设置（暂时隐藏）
+      <h3 style="margin-top: 20px">隐私设置</h3>
+      <div class="privacy-config">
+        <a-switch
+          v-model:checked="newDatabase.is_private"
+          checked-children="私有"
+          un-checked-children="公开"
+          size="default"
+        />
+        <span style="margin-left: 12px">设置为私有知识库</span>
+        <a-tooltip
+          title="当前未使用此属性。在部分智能体的设计中，可以根据隐私标志来决定启用什么模型和策略。例如，对于私有知识库，可以选择更严格的数据处理和访问控制策略，以保护敏感信息的安全性和隐私性。"
+        >
+          <InfoCircleOutlined style="margin-left: 8px; color: var(--gray-500); cursor: help" />
+        </a-tooltip>
+      </div>
+      -->
+
+      <!-- 共享配置 -->
+      <h3>共享设置</h3>
+      <ShareConfigForm v-model="shareConfig" :auto-select-user-dept="true" />
       <template #footer>
         <a-button key="back" @click="cancelCreateDatabase">取消</a-button>
-        <a-button key="submit" type="primary" :loading="state.creating" @click="createDatabase">创建</a-button>
+        <a-button
+          key="submit"
+          type="primary"
+          :loading="dbState.creating"
+          @click="handleCreateDatabase"
+          >创建</a-button
+        >
       </template>
     </a-modal>
 
     <!-- 加载状态 -->
-    <div v-if="state.loading" class="loading-container">
+    <div v-if="dbState.listLoading" class="loading-container">
       <a-spin size="large" />
       <p>正在加载知识库...</p>
     </div>
 
+    <!-- 空状态显示 -->
+    <div v-else-if="!databases || databases.length === 0" class="empty-state">
+      <h3 class="empty-title">暂无知识库</h3>
+      <p class="empty-description">创建您的第一个知识库，开始管理文档和知识</p>
+      <a-button type="primary" size="large" @click="state.openNewDatabaseModel = true">
+        <template #icon>
+          <PlusOutlined />
+        </template>
+        创建知识库
+      </a-button>
+    </div>
+
     <!-- 数据库列表 -->
     <div v-else class="databases">
-      <div class="new-database dbcard" @click="state.openNewDatabaseModel=true">
-        <div class="top">
-          <div class="icon"><BookPlus /></div>
-          <div class="info">
-            <h3>新建知识库</h3>
-          </div>
-        </div>
-        <p>导入您自己的文本数据或通过Webhook实时写入数据以增强 LLM 的上下文。</p>
-      </div>
       <div
         v-for="database in databases"
         :key="database.db_id"
         class="database dbcard"
-        @click="navigateToDatabase(database.db_id)">
+        @click="navigateToDatabase(database.db_id)"
+      >
+        <!-- 私有知识库锁定图标 -->
+        <LockOutlined
+          v-if="database.metadata?.is_private"
+          class="private-lock-icon"
+          title="私有知识库"
+        />
         <div class="top">
           <div class="icon">
             <component :is="getKbTypeIcon(database.kb_type || 'lightrag')" />
@@ -112,7 +163,7 @@
             <p>
               <span>{{ database.files ? Object.keys(database.files).length : 0 }} 文件</span>
               <span class="created-time-inline" v-if="database.created_at">
-                • {{ formatCreatedTime(database.created_at) }}
+                {{ formatCreatedTime(database.created_at) }}
               </span>
             </p>
           </div>
@@ -122,7 +173,9 @@
         </a-tooltip> -->
         <p class="description">{{ database.description || '暂无描述' }}</p>
         <div class="tags">
-          <a-tag color="blue" v-if="database.embed_info?.name">{{ database.embed_info.name }}</a-tag>
+          <a-tag color="blue" v-if="database.embed_info?.name">{{
+            database.embed_info.name
+          }}</a-tag>
           <!-- <a-tag color="green" v-if="database.embed_info?.dimension">{{ database.embed_info.dimension }}</a-tag> -->
           <a-tag
             :color="getKbTypeColor(database.kb_type || 'lightrag')"
@@ -132,7 +185,6 @@
             {{ getKbTypeLabel(database.kb_type || 'lightrag') }}
           </a-tag>
         </div>
-
         <!-- <button @click="deleteDatabase(database.collection_name)">删除</button> -->
       </div>
     </div>
@@ -141,36 +193,42 @@
 
 <script setup>
 import { ref, onMounted, reactive, watch, computed } from 'vue'
-import { useRouter, useRoute } from 'vue-router';
-import { useConfigStore } from '@/stores/config';
-import { message } from 'ant-design-vue'
-import { BookPlus, Database, Zap, FileDigit,  Waypoints, Building2, FolderGit2 } from 'lucide-vue-next';
-import { databaseApi, typeApi } from '@/apis/knowledge_api';
-import HeaderComponent from '@/components/HeaderComponent.vue';
-import ModelSelectorComponent from '@/components/ModelSelectorComponent.vue';
+import { useRouter, useRoute } from 'vue-router'
+import { storeToRefs } from 'pinia'
+import { useConfigStore } from '@/stores/config'
+import { useDatabaseStore } from '@/stores/database'
+import { LockOutlined, InfoCircleOutlined, PlusOutlined } from '@ant-design/icons-vue'
+import { typeApi } from '@/apis/knowledge_api'
+import HeaderComponent from '@/components/HeaderComponent.vue'
+import ModelSelectorComponent from '@/components/ModelSelectorComponent.vue'
+import EmbeddingModelSelector from '@/components/EmbeddingModelSelector.vue'
+import ShareConfigForm from '@/components/ShareConfigForm.vue'
+import dayjs, { parseToShanghai } from '@/utils/time'
+import AiTextarea from '@/components/AiTextarea.vue'
+import { getKbTypeLabel, getKbTypeIcon, getKbTypeColor } from '@/utils/kb_utils'
 
 const route = useRoute()
 const router = useRouter()
-const databases = ref([])
 const configStore = useConfigStore()
+const databaseStore = useDatabaseStore()
+
+// 使用 store 的状态
+const { databases, state: dbState } = storeToRefs(databaseStore)
 
 const state = reactive({
-  loading: false,
-  creating: false,
-  openNewDatabaseModel: false,
+  openNewDatabaseModel: false
 })
 
-const embedModelOptions = computed(() => {
-  return Object.keys(configStore.config?.embed_model_names || {}).map(key => ({
-    label: `${key} (${configStore.config?.embed_model_names[key]?.dimension})`,
-    value: key,
-  }))
+// 共享配置状态（用于提交数据）
+const shareConfig = ref({
+  is_shared: true,
+  accessible_department_ids: []
 })
 
 // 语言选项（值使用英文，以保证后端/LightRAG 兼容；标签为中英文方便理解）
 const languageOptions = [
-  { label: '英语 English', value: 'English' },
   { label: '中文 Chinese', value: 'Chinese' },
+  { label: '英语 English', value: 'English' },
   { label: '日语 Japanese', value: 'Japanese' },
   { label: '韩语 Korean', value: 'Korean' },
   { label: '德语 German', value: 'German' },
@@ -179,30 +237,39 @@ const languageOptions = [
   { label: '葡萄牙语 Portuguese', value: 'Portuguese' },
   { label: '俄语 Russian', value: 'Russian' },
   { label: '阿拉伯语 Arabic', value: 'Arabic' },
-  { label: '印地语 Hindi', value: 'Hindi' },
+  { label: '印地语 Hindi', value: 'Hindi' }
 ]
 
-const emptyEmbedInfo = {
+const createEmptyDatabaseForm = () => ({
   name: '',
   description: '',
   embed_model_name: configStore.config?.embed_model,
-  kb_type: 'chroma', // 默认为 Milvus
-  // Vector 知识库特有配置
-  storage: '', // 存储方式配置
-  // LightRAG 特有配置
-  language: 'English',
+  kb_type: 'milvus',
+  is_private: false,
+  storage: '',
+  language: 'Chinese',
   llm_info: {
     provider: '',
     model_name: ''
-  },
-}
+  }
+})
 
-const newDatabase = reactive({
-  ...emptyEmbedInfo,
+const newDatabase = reactive(createEmptyDatabaseForm())
+
+const llmModelSpec = computed(() => {
+  const provider = newDatabase.llm_info?.provider || ''
+  const modelName = newDatabase.llm_info?.model_name || ''
+  if (provider && modelName) {
+    return `${provider}/${modelName}`
+  }
+  return ''
 })
 
 // 支持的知识库类型
 const supportedKbTypes = ref({})
+
+// 有序的知识库类型
+const orderedKbTypes = computed(() => supportedKbTypes.value)
 
 // 加载支持的知识库类型
 const loadSupportedKbTypes = async () => {
@@ -215,127 +282,58 @@ const loadSupportedKbTypes = async () => {
     // 如果加载失败，设置默认类型
     supportedKbTypes.value = {
       lightrag: {
-        description: "基于图检索的知识库，支持实体关系构建和复杂查询",
-        class_name: "LightRagKB"
+        description: '基于图检索的知识库，支持实体关系构建和复杂查询',
+        class_name: 'LightRagKB'
       }
     }
   }
 }
 
-const loadDatabases = () => {
-  state.loading = true
-  // loadGraph()
-  databaseApi.getDatabases()
-    .then(data => {
-      console.log(data)
-      // 按照创建时间排序，最新的在前面
-      databases.value = data.databases.sort((a, b) => {
-        const timeA = a.created_at ? new Date(a.created_at).getTime() : 0
-        const timeB = b.created_at ? new Date(b.created_at).getTime() : 0
-        return timeB - timeA // 降序排列，最新的在前面
-      })
-      state.loading = false
-    })
-    .catch(error => {
-      console.error('加载数据库列表失败:', error);
-      if (error.message.includes('权限')) {
-        message.error('需要管理员权限访问知识库')
-      }
-      state.loading = false
-    })
-}
+// 重排序模型信息现在直接从 configStore.config.reranker_names 获取，无需单独加载
 
 const resetNewDatabase = () => {
-  Object.assign(newDatabase, { ...emptyEmbedInfo })
+  Object.assign(newDatabase, createEmptyDatabaseForm())
+  // 重置共享配置
+  shareConfig.value = {
+    is_shared: true,
+    accessible_department_ids: []
+  }
 }
 
 const cancelCreateDatabase = () => {
   state.openNewDatabaseModel = false
-}
-
-// 知识库类型相关工具方法
-const getKbTypeLabel = (type) => {
-  const labels = {
-    lightrag: 'LightRAG',
-    chroma: 'Chroma',
-    milvus: 'Milvus',
-    codehub: 'CodeHub'
-  }
-  return labels[type] || type
-}
-
-const getKbTypeIcon = (type) => {
-  const icons = {
-    lightrag: Waypoints,
-    chroma: FileDigit,
-    milvus: Building2,
-    codehub: FolderGit2
-  }
-  return icons[type] || Database
-}
-
-// const getKbTypeDescription = (type) => {
-//   const descriptions = {
-//     lightrag: '🔥 图结构索引 • 智能查询 • 关系挖掘 • 复杂推理',
-//     chroma: '⚡ 轻量向量 • 快速开发 • 本地部署 • 简单易用',
-//     milvus: '🚀 生产级 • 高性能 • 分布式 • 企业级部署'
-//   }
-//   return descriptions[type] || ''
-// }
-
-const getKbTypeAlertType = (type) => {
-  const types = {
-    lightrag: 'info',
-    chroma: 'success',
-    milvus: 'warning'
-  }
-  return types[type] || 'info'
-}
-
-const getKbTypeColor = (type) => {
-  const colors = {
-    lightrag: 'purple',
-    chroma: 'orange',
-    milvus: 'red'
-  }
-  return colors[type] || 'blue'
-}
-
-const getKbTypeFeature = (type) => {
-  const features = {
-    lightrag: '图结构索引',
-    chroma: '轻量向量',
-    milvus: '生产级部署',
-    codehub: '代码仓库'
-  }
-  return features[type] || ''
+  resetNewDatabase()
 }
 
 // 格式化创建时间
 const formatCreatedTime = (createdAt) => {
   if (!createdAt) return ''
+  const parsed = parseToShanghai(createdAt)
+  if (!parsed) return ''
 
-  const now = new Date()
-  const createdTime = new Date(createdAt)
-  const diffInMs = now.getTime() - createdTime.getTime()
-  const diffInDays = Math.floor(diffInMs / (1000 * 60 * 60 * 24))
+  const today = dayjs().startOf('day')
+  const createdDay = parsed.startOf('day')
+  const diffInDays = today.diff(createdDay, 'day')
 
   if (diffInDays === 0) {
     return '今天创建'
-  } else if (diffInDays === 1) {
+  }
+  if (diffInDays === 1) {
     return '昨天创建'
-  } else if (diffInDays < 7) {
+  }
+  if (diffInDays < 7) {
     return `${diffInDays} 天前创建`
-  } else if (diffInDays < 30) {
+  }
+  if (diffInDays < 30) {
     const weeks = Math.floor(diffInDays / 7)
     return `${weeks} 周前创建`
-  } else if (diffInDays < 365) {
+  }
+  if (diffInDays < 365) {
     const months = Math.floor(diffInDays / 30)
     return `${months} 个月前创建`
-  } else {
-    const years = Math.floor(diffInDays / 365)
-    return `${years} 年前创建`
   }
+  const years = Math.floor(diffInDays / 365)
+  return `${years} 年前创建`
 }
 
 // 处理知识库类型改变
@@ -346,41 +344,47 @@ const handleKbTypeChange = (type) => {
 }
 
 // 处理LLM选择
-const handleLLMSelect = (selection) => {
-  console.log('LLM选择:', selection)
-  newDatabase.llm_info.provider = selection.provider
-  newDatabase.llm_info.model_name = selection.name
+const handleLLMSelect = (spec) => {
+  console.log('LLM选择:', spec)
+  if (typeof spec !== 'string' || !spec) return
+
+  const index = spec.indexOf('/')
+  const provider = index !== -1 ? spec.slice(0, index) : ''
+  const modelName = index !== -1 ? spec.slice(index + 1) : ''
+
+  newDatabase.llm_info.provider = provider
+  newDatabase.llm_info.model_name = modelName
 }
 
-const createDatabase = () => {
-  if (!newDatabase.name?.trim()) {
-    message.error('数据库名称不能为空')
-    return
-  }
-
-  if (!newDatabase.kb_type) {
-    message.error('请选择知识库类型')
-    return
-  }
-
-  state.creating = true
-
+// 构建请求数据（只负责表单数据转换）
+const buildRequestData = () => {
   const requestData = {
     database_name: newDatabase.name.trim(),
     description: newDatabase.description?.trim() || '',
     embed_model_name: newDatabase.embed_model_name || configStore.config.embed_model,
     kb_type: newDatabase.kb_type,
-    additional_params: {}
+    additional_params: {
+      is_private: newDatabase.is_private || false
+    }
   }
 
-  // 添加类型特有的配置
-  if (newDatabase.kb_type === 'chroma' || newDatabase.kb_type === 'milvus') {
-    requestData.additional_params.storage = newDatabase.storage || 'DemoA'
+  // 添加共享配置
+  requestData.share_config = {
+    is_shared: shareConfig.value.is_shared,
+    accessible_departments: shareConfig.value.is_shared
+      ? []
+      : shareConfig.value.accessible_department_ids || []
+  }
+
+  // 根据类型添加特定配置
+  if (['milvus'].includes(newDatabase.kb_type)) {
+    if (newDatabase.storage) {
+      requestData.additional_params.storage = newDatabase.storage
+    }
   }
 
   if (newDatabase.kb_type === 'lightrag') {
     requestData.additional_params.language = newDatabase.language || 'English'
-    // 添加LLM信息到请求数据
     if (newDatabase.llm_info.provider && newDatabase.llm_info.model_name) {
       requestData.llm_info = {
         provider: newDatabase.llm_info.provider,
@@ -389,44 +393,50 @@ const createDatabase = () => {
     }
   }
 
-  databaseApi.createDatabase(requestData)
-    .then(data => {
-      console.log('创建成功:', data)
-      loadDatabases()
-      resetNewDatabase()
-      message.success('创建成功')
-    })
-    .catch(error => {
-      console.error('创建数据库失败:', error)
-      message.error(error.message || '创建失败')
-    })
-    .finally(() => {
-      state.creating = false
-      state.openNewDatabaseModel = false
-    })
+  return requestData
+}
+
+// 创建按钮处理
+const handleCreateDatabase = async () => {
+  const requestData = buildRequestData()
+  try {
+    await databaseStore.createDatabase(requestData)
+    resetNewDatabase()
+    state.openNewDatabaseModel = false
+  } catch (error) {
+    // 错误已在 store 中处理
+  }
 }
 
 const navigateToDatabase = (databaseId) => {
-  router.push({ path: `/database/${databaseId}` });
-};
+  router.push({ path: `/database/${databaseId}` })
+}
 
-watch(() => route.path, (newPath, oldPath) => {
-  if (newPath === '/database') {
-    loadDatabases();
+watch(
+  () => route.path,
+  (newPath) => {
+    if (newPath === '/database') {
+      databaseStore.loadDatabases()
+    }
   }
-});
+)
 
 onMounted(() => {
   loadSupportedKbTypes()
-  loadDatabases()
+  databaseStore.loadDatabases()
 })
-
 </script>
 
 <style lang="less" scoped>
 .new-database-modal {
   .kb-type-guide {
     margin: 12px 0;
+  }
+
+  .privacy-config {
+    display: flex;
+    align-items: center;
+    margin-bottom: 12px;
   }
 
   .kb-type-cards {
@@ -441,93 +451,24 @@ onMounted(() => {
     }
 
     .kb-type-card {
-      border: 2px solid #f0f0f0;
+      border: 2px solid var(--gray-150);
       border-radius: 12px;
-      padding: 20px;
+      padding: 16px;
       cursor: pointer;
       transition: all 0.3s ease;
-      background: white;
+      background: var(--gray-0);
       position: relative;
       overflow: hidden;
 
       &:hover {
         border-color: var(--main-color);
-        transform: translateY(-1px);
-      }
-
-      // 为不同知识库类型设置不同的悬停颜色
-      &:nth-child(1):hover {
-        border-color: #d3adf7;
-      }
-
-      &:nth-child(2):hover {
-        border-color: #ffd591;
-      }
-
-      &:nth-child(3):hover {
-        border-color: #ffadd2;
       }
 
       &.active {
         border-color: var(--main-color);
-        background: #f8faff;
-
+        background: var(--main-10);
         .type-icon {
           color: var(--main-color);
-        }
-
-        .feature-tag {
-          background: rgba(24, 144, 255, 0.1);
-          color: var(--main-color);
-        }
-      }
-
-      // 为不同知识库类型设置不同的主题色
-      &:nth-child(1) {
-        &.active {
-          border-color: #d3adf7;
-          background: #f9f0ff;
-
-          .type-icon {
-            color: #722ed1;
-          }
-
-          .feature-tag {
-            background: rgba(114, 46, 209, 0.1);
-            color: #722ed1;
-          }
-        }
-      }
-
-      &:nth-child(2) {
-        &.active {
-          border-color: #ffd591;
-          background: #fff7e6;
-
-          .type-icon {
-            color: #fa8c16;
-          }
-
-          .feature-tag {
-            background: rgba(250, 140, 22, 0.1);
-            color: #fa8c16;
-          }
-        }
-      }
-
-      &:nth-child(3) {
-        &.active {
-          border-color: #ffadd2;
-          background: #fff1f0;
-
-          .type-icon {
-            color: #f5222d;
-          }
-
-          .feature-tag {
-            background: rgba(245, 34, 45, 0.1);
-            color: #f5222d;
-          }
         }
       }
 
@@ -555,19 +496,26 @@ onMounted(() => {
         font-size: 13px;
         color: var(--gray-600);
         line-height: 1.5;
-        margin-bottom: 12px;
-        min-height: 40px;
+        margin-bottom: 0;
+        // min-height: 40px;
       }
 
-      .card-features {
-        .feature-tag {
-          display: inline-block;
-          padding: 4px 8px;
-          background: rgba(24, 144, 255, 0.1);
-          color: var(--main-color);
-          border-radius: 6px;
-          font-size: 12px;
-          font-weight: 500;
+      .deprecated-badge {
+        background: var(--color-error-100);
+        color: var(--color-error-600);
+        font-size: 10px;
+        font-weight: 600;
+        padding: 2px 6px;
+        border-radius: 4px;
+        margin-left: auto;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        cursor: help;
+        transition: all 0.2s ease;
+
+        &:hover {
+          background: var(--color-error-200);
+          color: var(--color-error-700);
         }
       }
     }
@@ -576,9 +524,9 @@ onMounted(() => {
   .chunk-config {
     margin-top: 16px;
     padding: 12px 16px;
-    background-color: #fafafa;
+    background-color: var(--gray-25);
     border-radius: 6px;
-    border: 1px solid #f0f0f0;
+    border: 1px solid var(--gray-150);
 
     h3 {
       margin-top: 0;
@@ -618,21 +566,15 @@ onMounted(() => {
       .top {
         .info {
           h3 {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            flex-wrap: wrap;
-
-            .kb-type-tag {
-              margin-left: auto;
-            }
+            display: block;
           }
         }
       }
     }
   }
 }
-.database-actions, .document-actions {
+.database-actions,
+.document-actions {
   margin-bottom: 20px;
 }
 .databases {
@@ -640,92 +582,119 @@ onMounted(() => {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
   gap: 16px;
-
-  .new-database {
-    background-color: #F0F3F4;
-  }
 }
 
-.database, .graphbase {
-  background-color: white;
-  box-shadow: 0px 1px 2px 0px rgba(16,24,40,.06),0px 1px 3px 0px rgba(16,24,40,.1);
-  border: 2px solid white;
-  transition: box-shadow 0.2s ease-in-out;
-
-  &:hover {
-    box-shadow: 0px 4px 6px -2px rgba(16,24,40,.03),0px 12px 16px -4px rgba(16,24,40,.08);
-  }
+.database,
+.graphbase {
+  background: linear-gradient(145deg, var(--gray-0) 0%, var(--gray-10) 100%);
+  box-shadow: 0px 1px 2px 0px var(--shadow-2);
+  border: 1px solid var(--gray-100);
+  transition: none;
+  position: relative;
 }
 
-.dbcard, .database {
+.dbcard,
+.database {
   width: 100%;
-  padding: 10px;
-  border-radius: 12px;
-  height: 160px;
-  padding: 20px;
+  padding: 16px;
+  border-radius: 16px;
+  height: 156px;
   cursor: pointer;
   display: flex;
   flex-direction: column;
+  position: relative; // 为绝对定位的锁定图标提供参考
+  overflow: hidden;
+
+  .private-lock-icon {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    color: var(--gray-600);
+    background: linear-gradient(135deg, var(--gray-0) 0%, var(--gray-100) 100%);
+    font-size: 12px;
+    border-radius: 8px;
+    padding: 6px;
+    z-index: 2;
+    box-shadow: 0px 2px 4px var(--shadow-2);
+    border: 1px solid var(--gray-100);
+  }
 
   .top {
     display: flex;
     align-items: center;
-    height: 50px;
-    margin-bottom: 10px;
+    height: 54px;
+    margin-bottom: 14px;
 
     .icon {
-      width: 50px;
-      height: 50px;
-      font-size: 28px;
-      margin-right: 10px;
+      width: 54px;
+      height: 54px;
+      font-size: 26px;
+      margin-right: 14px;
       display: flex;
       justify-content: center;
       align-items: center;
-      background-color: #F5F8FF;
-      border-radius: 8px;
-      border: 1px solid #E0EAFF;
+      background: var(--main-30);
+      border-radius: 12px;
+      border: 1px solid var(--gray-150);
       color: var(--main-color);
+      position: relative;
     }
 
     .info {
-      h3, p {
+      flex: 1;
+      min-width: 0;
+
+      h3,
+      p {
         margin: 0;
-        color: black;
+        color: var(--gray-10000);
       }
 
       h3 {
-        font-size: 16px;
-        font-weight: bold;
+        font-size: 17px;
+        font-weight: 600;
+        letter-spacing: -0.02em;
+        line-height: 1.4;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
 
       p {
-        color: var(--gray-900);
-        font-size: small;
+        color: var(--gray-700);
+        font-size: 13px;
         display: flex;
         align-items: center;
         gap: 8px;
         flex-wrap: wrap;
+        margin-top: 4px;
+        font-weight: 400;
 
         .created-time-inline {
-          color: var(--gray-500);
-          font-size: 12px;
+          color: var(--gray-700);
+          font-size: 11px;
+          font-weight: 400;
+          background: var(--gray-50);
+          padding: 2px 6px;
+          border-radius: 4px;
         }
       }
     }
   }
 
   .description {
-    color: var(--gray-900);
+    color: var(--gray-600);
     overflow: hidden;
     display: -webkit-box;
     line-clamp: 1;
     -webkit-line-clamp: 1;
     -webkit-box-orient: vertical;
     text-overflow: ellipsis;
-    margin-bottom: 10px;
+    margin-bottom: 12px;
+    font-size: 13px;
+    font-weight: 400;
+    flex: 1;
   }
-
-
 }
 
 .database-empty {
@@ -735,6 +704,38 @@ onMounted(() => {
   height: 100%;
   flex-direction: column;
   color: var(--gray-900);
+}
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 100px 20px;
+  text-align: center;
+
+  .empty-title {
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--gray-900);
+    margin: 0 0 12px 0;
+    letter-spacing: -0.02em;
+  }
+
+  .empty-description {
+    font-size: 14px;
+    color: var(--gray-600);
+    margin: 0 0 32px 0;
+    line-height: 1.5;
+    max-width: 320px;
+  }
+
+  .ant-btn {
+    height: 44px;
+    padding: 0 24px;
+    font-size: 15px;
+    font-weight: 500;
+  }
 }
 
 .database-container {
@@ -756,5 +757,3 @@ onMounted(() => {
   }
 }
 </style>
-
-

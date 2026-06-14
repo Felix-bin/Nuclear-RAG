@@ -1,522 +1,448 @@
-/**
- * 聊天对话HTML导出工具类
- * 用于将聊天对话导出为HTML文件
- */
+import { marked } from 'marked'
+import dayjs, { parseToShanghai } from '@/utils/time'
+import chatExportTemplate from './templates/chat-export-template.html?raw'
+
+// 统一的 Markdown 渲染配置
+marked.setOptions({
+  gfm: true,
+  breaks: true,
+  mangle: false,
+  headerIds: false
+})
 
 export class ChatExporter {
   /**
-   * 导出聊天对话为HTML文件
+   * 导出聊天对话为 HTML 文件
    * @param {Object} options 导出选项
-   * @param {string} options.chatTitle 对话标题
-   * @param {string} options.agentName 智能体名称
-   * @param {string} options.agentDescription 智能体描述
-   * @param {Array} options.messages 消息列表
-   * @param {Array} options.onGoingMessages 进行中的消息列表
    */
-  static async exportToHTML(options) {
+  static async exportToHTML(options = {}) {
     const {
       chatTitle = '新对话',
       agentName = '智能助手',
       agentDescription = '',
-      messages = [],
-      onGoingMessages = []
-    } = options;
+      messages = []
+    } = options || {}
 
     try {
-      // 生成HTML内容
       const htmlContent = this.generateHTML({
         chatTitle,
         agentName,
         agentDescription,
-        messages,
-        onGoingMessages
-      });
+        messages
+      })
 
-      // 创建下载链接
-      const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
+      const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      const timestamp = dayjs().tz('Asia/Shanghai').format('YYYYMMDD-HHmmss')
+      const safeTitle = chatTitle.replace(/[\\/:*?"<>|]/g, '_')
+      const filename = `${safeTitle}-${timestamp}.html`
 
-      // 生成文件名
-      const timestamp = new Date().toLocaleString('zh-CN').replace(/[:/\s]/g, '-');
-      const filename = `${chatTitle}-${timestamp}.html`;
+      link.href = url
+      link.download = filename
+      link.style.display = 'none'
 
-      link.href = url;
-      link.download = filename;
-      link.style.display = 'none';
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(url)
 
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-
-      // 清理URL对象
-      URL.revokeObjectURL(url);
-
-      return { success: true, filename };
+      return { success: true, filename }
     } catch (error) {
-      console.error('导出对话失败:', error);
-      throw new Error(`导出失败: ${error.message}`);
+      console.error('导出对话失败:', error)
+      throw new Error(`导出失败: ${error.message}`)
     }
   }
 
   /**
-   * 生成HTML内容
-   * @param {Object} options 生成选项
-   * @returns {string} HTML内容
+   * 生成完整 HTML 内容
    */
   static generateHTML(options) {
-    const {
-      chatTitle,
-      agentName,
-      agentDescription,
-      messages,
-      onGoingMessages
-    } = options;
+    const { chatTitle, agentName, agentDescription, messages } = options
 
-    const exportTime = new Date().toLocaleString('zh-CN');
-
-    // 合并所有消息
-    const allMessages = [];
-
-    // 添加历史对话消息
-    messages.forEach(conv => {
-      if (conv.messages) {
-        conv.messages.forEach(msg => {
-          allMessages.push(msg);
-        });
-      }
-    });
-
-    // 添加当前进行中的对话消息
-    onGoingMessages.forEach(msg => {
-      allMessages.push(msg);
-    });
-
-    if (allMessages.length === 0) {
-      throw new Error('没有可导出的对话内容');
+    const flattenedMessages = this.flattenMessages(messages)
+    if (flattenedMessages.length === 0) {
+      throw new Error('没有可导出的对话内容')
     }
 
-    // 生成消息HTML
-    const messagesHTML = this.generateMessagesHTML(allMessages, agentName);
+    const messagesHTML = this.generateMessagesHTML(flattenedMessages, agentName)
 
-    // 返回完整的HTML文档
     return this.generateHTMLTemplate({
       chatTitle,
       agentName,
       agentDescription,
-      exportTime,
+      exportTime: dayjs().tz('Asia/Shanghai').format('YYYY年MM月DD日 HH:mm:ss'),
       messagesHTML
-    });
+    })
   }
 
   /**
-   * 生成消息HTML
-   * @param {Array} messages 消息列表
-   * @param {string} agentName 智能体名称
-   * @returns {string} 消息HTML
+   * 扁平化消息列表
+   */
+  static flattenMessages(messages = []) {
+    const result = []
+
+    console.log('[ChatExporter] flattenMessages input:', {
+      messagesLength: messages?.length || 0,
+      messagesType: Array.isArray(messages) ? 'array' : typeof messages,
+      firstMessage: messages?.[0]
+        ? {
+            hasMessages: Array.isArray(messages[0].messages),
+            hasType: !!messages[0].type,
+            hasRole: !!messages[0].role,
+            hasContent: !!messages[0].content,
+            keys: Object.keys(messages[0])
+          }
+        : null
+    })
+
+    ;(messages || []).forEach((item) => {
+      if (!item) return
+
+      if (Array.isArray(item.messages)) {
+        item.messages.forEach((msg) => {
+          if (msg) result.push(msg)
+        })
+        return
+      }
+
+      // 支持直接传入消息扁平数组
+      if (item.type || item.role || item.content) {
+        result.push(item)
+      }
+    })
+
+    return result
+  }
+
+  /**
+   * 生成对话消息的 HTML 片段
    */
   static generateMessagesHTML(messages, agentName) {
-    return messages.map((msg, index) => {
-      const isUser = msg.type === 'human';
-      const avatar = isUser ? '👤' : '🤖';
-      const senderName = isUser ? '用户' : agentName;
-      const messageClass = isUser ? 'user-message' : 'ai-message';
+    return messages
+      .map((msg) => {
+        const isUserMessage = ['human', 'user'].includes(msg?.type) || msg?.role === 'user'
+        const avatar = isUserMessage ? '👤' : '🤖'
+        const senderLabel = isUserMessage ? '用户' : agentName || '智能助手'
+        const messageClass = isUserMessage ? 'user-message' : 'ai-message'
+        const timestampRaw = this.getMessageTimestamp(msg)
+        const timestamp = this.escapeHtml(this.formatTimestamp(timestampRaw))
 
-      // 处理消息内容
-      let content = (msg.content || '').trim();
-      content = content.replace(/\n/g, '<br>');
+        const { content, reasoning } = this.extractMessageContent(msg)
+        const contentHTML = content ? this.renderMarkdown(content) : ''
+        const reasoningHTML = !isUserMessage ? this.generateReasoningHTML(reasoning) : ''
+        const toolCallsHTML = !isUserMessage ? this.generateToolCallsHTML(msg) : ''
 
-      // 处理思考过程
-      const reasoningHTML = this.generateReasoningHTML(msg, isUser);
+        const bodySegments = [
+          reasoningHTML,
+          contentHTML ? `<div class="markdown-body">${contentHTML}</div>` : '',
+          toolCallsHTML
+        ].filter(Boolean)
 
-      // 处理工具调用
-      const toolCallsHTML = this.generateToolCallsHTML(msg);
-
-      return `
+        return `
         <div class="message ${messageClass}">
           <div class="message-header">
             <span class="avatar">${avatar}</span>
-            <span class="sender">${senderName}</span>
-            <span class="time">${new Date().toLocaleString('zh-CN')}</span>
+            <span class="sender">${this.escapeHtml(senderLabel)}</span>
+            <span class="time">${timestamp}</span>
           </div>
           <div class="message-content">
-            ${reasoningHTML}
-            ${content}
-            ${toolCallsHTML}
+            ${bodySegments.length > 0 ? bodySegments.join('') : '<div class="empty-message">（此消息暂无可展示内容）</div>'}
           </div>
         </div>
-      `;
-    }).join('');
+      `
+      })
+      .join('')
   }
 
   /**
-   * 生成思考过程HTML
-   * @param {Object} msg 消息对象
-   * @param {boolean} isUser 是否为用户消息
-   * @returns {string} 思考过程HTML
+   * 拆分消息内容与推理文本
    */
-  static generateReasoningHTML(msg, isUser) {
-    if (isUser) return '';
+  static extractMessageContent(msg = {}) {
+    const content = this.normalizeContent(msg?.content)
+    let reasoning = msg?.additional_kwargs?.reasoning_content || msg?.reasoning_content || ''
+    let visibleContent = content
 
-    const reasoningContent = msg.additional_kwargs?.reasoning_content || msg.reasoning_content;
-    if (!reasoningContent) return '';
+    if (!reasoning && content.includes('<think')) {
+      const thinkRegex = /<think>([\s\S]*?)<\/think>|<think>([\s\S]*)$/i
+      const match = content.match(thinkRegex)
+      if (match) {
+        reasoning = (match[1] || match[2] || '').trim()
+        visibleContent = content.replace(match[0], '').trim()
+      }
+    }
 
-    const content = reasoningContent.trim().replace(/\n/g, '<br>');
+    return {
+      content: visibleContent,
+      reasoning
+    }
+  }
+
+  /**
+   * 标准化消息内容
+   */
+  static normalizeContent(raw) {
+    if (raw == null) return ''
+    if (typeof raw === 'string') return raw
+
+    if (Array.isArray(raw)) {
+      return raw
+        .map((item) => {
+          if (!item) return ''
+          if (typeof item === 'string') return item
+          if (typeof item === 'object') {
+            return item.text || item.content || item.value || ''
+          }
+          return String(item)
+        })
+        .filter(Boolean)
+        .join('\n')
+        .trim()
+    }
+
+    if (typeof raw === 'object') {
+      if (typeof raw.text === 'string') return raw.text
+      if (typeof raw.content === 'string') return raw.content
+      if (Array.isArray(raw.content)) return this.normalizeContent(raw.content)
+      try {
+        return JSON.stringify(raw, null, 2)
+      } catch {
+        return String(raw)
+      }
+    }
+
+    return String(raw)
+  }
+
+  /**
+   * 生成推理过程 HTML
+   */
+  static generateReasoningHTML(reasoning) {
+    if (!reasoning) return ''
+
+    const reasoningHTML = this.renderMarkdown(reasoning)
+    if (!reasoningHTML) return ''
+
     return `
-      <div class="reasoning-section">
-        <div class="reasoning-header">💭 思考过程</div>
-        <div class="reasoning-content">${content}</div>
-      </div>
-    `;
-  }
-
-  /**
-   * 生成工具调用HTML
-   * @param {Object} msg 消息对象
-   * @returns {string} 工具调用HTML
-   */
-  static generateToolCallsHTML(msg) {
-    if (!msg.tool_calls || msg.tool_calls.length === 0) return '';
-
-    let toolCallsHTML = '<div class="tool-calls">';
-    
-    msg.tool_calls.forEach(toolCall => {
-      const args = toolCall.function?.arguments 
-        ? JSON.parse(toolCall.function.arguments) 
-        : toolCall?.args || '{}';
-      
-      toolCallsHTML += `
-        <div class="tool-call">
-          <div class="tool-call-header">
-            <strong>🔧 ${toolCall.function?.name || '工具调用'}</strong>
-          </div>
-          <div class="tool-call-args">
-            <pre>${JSON.stringify(args, null, 2)}</pre>
-          </div>
-          ${toolCall.tool_call_result ? `
-            <div class="tool-call-result">
-              <div class="tool-result-header">执行结果:</div>
-              <div class="tool-result-content">${toolCall.tool_call_result.content || ''}</div>
-            </div>
-          ` : ''}
+      <details class="reasoning-section">
+        <summary class="reasoning-summary">💭 思考过程</summary>
+        <div class="reasoning-content markdown-body">
+          ${reasoningHTML}
         </div>
-      `;
-    });
-    
-    toolCallsHTML += '</div>';
-    return toolCallsHTML;
+      </details>
+    `
   }
 
   /**
-   * 生成完整的HTML模板
-   * @param {Object} options 模板选项
-   * @returns {string} 完整的HTML文档
+   * 生成工具调用 HTML
+   */
+  static generateToolCallsHTML(msg = {}) {
+    const toolCalls = this.normalizeToolCalls(msg)
+    if (toolCalls.length === 0) return ''
+
+    const sections = toolCalls
+      .map((toolCall) => {
+        const toolName = this.escapeHtml(toolCall?.function?.name || toolCall?.name || '工具调用')
+        const argsSource = toolCall?.args ?? toolCall?.function?.arguments
+        const args = this.stringifyToolArgs(argsSource)
+        const result = this.normalizeToolResult(toolCall?.tool_call_result?.content)
+        const isFinished = toolCall?.status === 'success'
+        const stateClass = isFinished ? 'done' : 'pending'
+        const stateLabel = isFinished ? '已完成' : '执行中'
+
+        return `
+        <details class="tool-call" ${isFinished ? '' : 'open'}>
+          <summary>
+            <span class="tool-call-title">🔧 ${toolName}</span>
+            <span class="tool-call-state ${stateClass}">${stateLabel}</span>
+          </summary>
+          <div class="tool-call-body">
+            ${
+              args
+                ? `
+              <div class="tool-call-args">
+                <strong>参数</strong>
+                <pre>${this.escapeHtml(args)}</pre>
+              </div>
+            `
+                : ''
+            }
+            ${
+              isFinished && result
+                ? `
+              <div class="tool-call-result">
+                <strong>结果</strong>
+                <pre>${this.escapeHtml(result)}</pre>
+              </div>
+            `
+                : ''
+            }
+          </div>
+        </details>
+      `
+      })
+      .join('')
+
+    return `<div class="tool-calls">${sections}</div>`
+  }
+
+  static normalizeToolCalls(msg = {}) {
+    const rawCalls = msg.tool_calls || msg.additional_kwargs?.tool_calls
+    if (!rawCalls) return []
+    if (Array.isArray(rawCalls)) return rawCalls.filter(Boolean)
+    if (typeof rawCalls === 'object') {
+      return Object.values(rawCalls).filter(Boolean)
+    }
+    return []
+  }
+
+  static stringifyToolArgs(rawArgs) {
+    if (rawArgs == null || rawArgs === '') return ''
+
+    if (typeof rawArgs === 'string') {
+      const trimmed = rawArgs.trim()
+      if (!trimmed) return ''
+      try {
+        return JSON.stringify(JSON.parse(trimmed), null, 2)
+      } catch {
+        return trimmed
+      }
+    }
+
+    if (typeof rawArgs === 'object') {
+      try {
+        return JSON.stringify(rawArgs, null, 2)
+      } catch {
+        return String(rawArgs)
+      }
+    }
+
+    return String(rawArgs)
+  }
+
+  static normalizeToolResult(result) {
+    if (!result) return ''
+    if (typeof result === 'string') return result.trim()
+
+    if (Array.isArray(result)) {
+      return result
+        .map((item) => {
+          if (!item) return ''
+          if (typeof item === 'string') return item
+          if (typeof item === 'object') {
+            return item.text || item.content || JSON.stringify(item, null, 2)
+          }
+          return String(item)
+        })
+        .filter(Boolean)
+        .join('\n\n')
+        .trim()
+    }
+
+    if (typeof result === 'object') {
+      if (typeof result.content !== 'undefined') {
+        return this.normalizeToolResult(result.content)
+      }
+      try {
+        return JSON.stringify(result, null, 2)
+      } catch {
+        return String(result)
+      }
+    }
+
+    return String(result)
+  }
+
+  /**
+   * 统一的 Markdown 渲染，失败时回退到简单换行
+   */
+  static renderMarkdown(content) {
+    if (!content) return ''
+    try {
+      return marked.parse(content).trim()
+    } catch (error) {
+      console.warn('Markdown 渲染失败，回退为纯文本:', error)
+      return this.escapeHtml(content).replace(/\n/g, '<br>')
+    }
+  }
+
+  /**
+   * HTML 转义
+   */
+  static escapeHtml(value) {
+    if (value == null) return ''
+    return String(value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;')
+  }
+
+  /**
+   * 提取消息时间戳
+   */
+  static getMessageTimestamp(msg = {}) {
+    const candidates = [
+      msg.timestamp,
+      msg.created_at,
+      msg.createdAt,
+      msg.createdTime,
+      msg.time,
+      msg.datetime,
+      msg.date,
+      msg.additional_kwargs?.timestamp,
+      msg.additional_kwargs?.created_at
+    ]
+
+    return candidates.find((value) => value !== undefined && value !== null)
+  }
+
+  /**
+   * 格式化时间戳
+   */
+  static formatTimestamp(raw) {
+    const fallback = dayjs().tz('Asia/Shanghai')
+
+    if (raw instanceof Date) {
+      return dayjs(raw).tz('Asia/Shanghai').format('YYYY年MM月DD日 HH:mm:ss')
+    }
+
+    if (raw || raw === 0) {
+      if (typeof raw === 'number') {
+        const value = raw < 1e12 ? raw * 1000 : raw
+        return dayjs(value).tz('Asia/Shanghai').format('YYYY年MM月DD日 HH:mm:ss')
+      }
+
+      const parsed = parseToShanghai(raw)
+      if (parsed) {
+        return parsed.format('YYYY年MM月DD日 HH:mm:ss')
+      }
+    }
+
+    return fallback.format('YYYY年MM月DD日 HH:mm:ss')
+  }
+
+  /**
+   * 生成完整 HTML 文档骨架
    */
   static generateHTMLTemplate(options) {
-    const { chatTitle, agentName, agentDescription, exportTime, messagesHTML } = options;
+    const { chatTitle, agentName, agentDescription, exportTime, messagesHTML } = options
 
-    return `<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>${chatTitle} - 对话导出</title>
-    <style>
-        ${this.getCSS()}
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>${chatTitle}</h1>
-            <div class="agent-info">
-                <strong>智能体:</strong> ${agentName}
-                ${agentDescription ? `<br><strong>描述:</strong> ${agentDescription}` : ''}
-            </div>
-            <div class="export-info">
-                导出时间: ${exportTime}
-            </div>
-        </div>
-        <div class="messages">
-            ${messagesHTML}
-        </div>
-        <div class="footer">
-            <p>此对话由 <a href="#" target="_blank">智能助手平台</a> 导出</p>
-        </div>
-    </div>
-</body>
-</html>`;
-  }
+    const safeTitle = this.escapeHtml(chatTitle)
+    const safeAgentName = this.escapeHtml(agentName)
+    const safeDescription = this.escapeHtml(agentDescription).replace(/\n/g, '<br>')
+    const safeExportTime = this.escapeHtml(exportTime)
 
-  /**
-   * 获取CSS样式
-   * @returns {string} CSS样式字符串
-   */
-  static getCSS() {
-    return `
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+    const descriptionBlock = agentDescription ? `<br><strong>描述:</strong> ${safeDescription}` : ''
 
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif;
-            line-height: 1.6;
-            color: #333;
-            background-color: white;
-            margin: 0;
-            padding: 0;
-        }
-
-        .container {
-            max-width: 1000px;
-            margin: 0 auto;
-            background: white;
-            min-height: 100vh;
-        }
-
-        .header {
-            background: #f8f9fa;
-            border-bottom: 2px solid #e9ecef;
-            padding: 24px;
-            text-align: center;
-        }
-
-        .header h1 {
-            font-size: 24px;
-            margin-bottom: 8px;
-            color: #212529;
-            font-weight: 600;
-        }
-
-        .header .agent-info {
-            font-size: 14px;
-            color: #6c757d;
-            margin-bottom: 12px;
-        }
-
-        .header .export-info {
-            font-size: 12px;
-            color: #868e96;
-            padding-top: 12px;
-            border-top: 1px solid #dee2e6;
-        }
-
-        .messages {
-            padding: 32px 48px;
-            max-width: 100%;
-        }
-
-        .message {
-            margin-bottom: 32px;
-            max-width: 100%;
-        }
-
-        .message:last-child {
-            margin-bottom: 0;
-        }
-
-        .message-header {
-            display: flex;
-            align-items: center;
-            margin-bottom: 12px;
-            font-size: 14px;
-            color: #666;
-        }
-
-        .avatar {
-            font-size: 16px;
-            margin-right: 8px;
-        }
-
-        .sender {
-            font-weight: 600;
-            margin-right: 12px;
-        }
-
-        .time {
-            font-size: 12px;
-            color: #999;
-        }
-
-        .message-content {
-            padding: 16px 20px;
-            border-radius: 8px;
-            width: 100%;
-            max-width: 100%;
-        }
-
-        .user-message .message-content {
-            color: white;
-            background: #1C6586;
-            border: 1px solid #1C6586;
-            width: fit-content;
-        }
-
-        .ai-message .message-content {
-            background: white;
-            border: 1px solid #e9ecef;
-        }
-
-        .reasoning-section {
-            background: #f8f9fa;
-            border: 1px solid #dee2e6;
-            border-radius: 6px;
-            padding: 12px;
-            margin-bottom: 16px;
-        }
-
-        .reasoning-header {
-            font-size: 13px;
-            font-weight: 600;
-            color: #495057;
-            margin-bottom: 8px;
-            display: flex;
-            align-items: center;
-        }
-
-        .reasoning-content {
-            font-size: 14px;
-            color: #6c757d;
-            font-style: italic;
-            line-height: 1.5;
-        }
-
-        .tool-calls {
-            margin-top: 16px;
-            padding-top: 16px;
-            border-top: 1px solid #e9ecef;
-        }
-
-        .tool-call {
-            background: #fff8e1;
-            border: 1px solid #ffe082;
-            border-radius: 6px;
-            padding: 12px;
-            margin-bottom: 12px;
-        }
-
-        .tool-call:last-child {
-            margin-bottom: 0;
-        }
-
-        .tool-call-header {
-            font-size: 14px;
-            color: #f57f17;
-            margin-bottom: 8px;
-            font-weight: 600;
-        }
-
-        .tool-call-args {
-            background: rgba(0,0,0,0.04);
-            border-radius: 4px;
-            padding: 8px;
-            margin-bottom: 8px;
-        }
-
-        .tool-call-args pre {
-            font-size: 12px;
-            color: #666;
-            white-space: pre-wrap;
-            word-break: break-all;
-            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
-        }
-
-        .tool-call-result {
-            background: #e8f5e8;
-            border: 1px solid #c8e6c9;
-            border-radius: 4px;
-            padding: 8px;
-            word-break: break-all;
-        }
-
-        .tool-result-header {
-            font-size: 12px;
-            color: #2e7d32;
-            font-weight: 600;
-            margin-bottom: 4px;
-        }
-
-        .tool-result-content {
-            font-size: 13px;
-            color: #388e3c;
-        }
-
-        .footer {
-            background: #f8f9fa;
-            text-align: center;
-            padding: 16px;
-            font-size: 12px;
-            color: #666;
-            border-top: 1px solid #e9ecef;
-        }
-
-        .footer a {
-            color: #007bff;
-            text-decoration: none;
-        }
-
-        @media (max-width: 768px) {
-            .messages {
-                padding: 24px 16px;
-            }
-
-            .header {
-                padding: 16px;
-            }
-
-            .user-message .message-content {
-                margin-left: 10%;
-            }
-
-            .ai-message .message-content {
-                margin-right: 10%;
-            }
-        }
-
-        @media (max-width: 480px) {
-            .user-message .message-content,
-            .ai-message .message-content {
-                margin-left: 0;
-                margin-right: 0;
-            }
-        }
-
-        @media print {
-            body {
-                background: white;
-                margin: 0;
-                padding: 0;
-            }
-
-            .container {
-                box-shadow: none;
-                border-radius: 0;
-                max-width: 100%;
-            }
-
-            .header {
-                background: #f8f9fa !important;
-                -webkit-print-color-adjust: exact;
-            }
-
-            .messages {
-                padding: 20px;
-            }
-
-            .user-message .message-content {
-                background: #e3f2fd !important;
-                -webkit-print-color-adjust: exact;
-            }
-
-            .reasoning-section {
-                background: #f8f9fa !important;
-                -webkit-print-color-adjust: exact;
-            }
-        }
-    `;
+    return chatExportTemplate
+      .replace(/{{TITLE}}/g, safeTitle)
+      .replace('{{AGENT_NAME}}', safeAgentName)
+      .replace('{{DESCRIPTION_BLOCK}}', descriptionBlock)
+      .replace('{{EXPORT_TIME}}', safeExportTime)
+      .replace('{{MESSAGES}}', messagesHTML)
   }
 }
 
-export default ChatExporter;
+export default ChatExporter

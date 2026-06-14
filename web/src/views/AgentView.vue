@@ -1,49 +1,9 @@
 <template>
   <div class="agent-view">
-    <div class="agent-view-header">
-      <div class="header-left">
-        <div class="header-item">
-          <span class="brandname">{{ infoStore.branding?.title }}</span>
-        </div>
-      </div>
-      <div class="header-center">
-      </div>
-      <div class="header-right">
-        <div class="header-item">
-          <a-button class="header-button" @click="openAgentModal">
-            <Bot size="18" stroke-width="1.75" />
-            切换模式
-          </a-button>
-        </div>
-        <div class="header-item">
-          <a-button class="header-button" @click="toggleConf" :icon="h(SettingOutlined)"> 配置 </a-button>
-        </div>
-        <div class="header-item">
-          <a-button
-            class="header-button"
-            @click="goToAgentPage"
-            v-if="selectedAgentId"
-          >
-            <template #icon><LinkOutlined /></template>
-            用户界面
-          </a-button>
-        </div>
-        <div class="header-item">
-          <a-button
-            class="header-button"
-            @click="openFloatingWindow"
-            v-if="selectedAgentId"
-          >
-            <Maximize2 size="18" stroke-width="1.75" />
-            悬浮窗
-          </a-button>
-        </div>
-      </div>
-    </div>
     <div class="agent-view-body">
       <!-- 智能体选择弹窗 -->
       <a-modal
-        v-model:open="state.agentModalOpen"
+        v-model:open="chatUIStore.agentModalOpen"
         title="选择智能体"
         :width="800"
         :footer="null"
@@ -53,194 +13,362 @@
         <div class="agent-modal-content">
           <div class="agents-grid">
             <div
-              v-for="(agent, id) in agents"
-              :key="id"
+              v-for="agent in agents"
+              :key="agent.id"
               class="agent-card"
-              :class="{ 'selected': id === selectedAgentId }"
-              @click="selectAgentFromModal(id)"
+              :class="{ selected: agent.id === selectedAgentId }"
+              @click="selectAgentFromModal(agent.id)"
             >
               <div class="agent-card-header">
                 <div class="agent-card-title">
-                  <span class="agent-card-name">{{ agent.name }}</span>
-                  <StarFilled v-if="id === defaultAgentId" class="default-icon" />
-                  <StarOutlined v-else @click.prevent="setAsDefaultAgent(id)" class="default-icon" />
+                  <span class="agent-card-name">{{ agent.name || 'Unknown' }}</span>
                 </div>
+                <StarFilled v-if="agent.id === defaultAgentId" class="default-icon" />
+                <StarOutlined
+                  v-else
+                  @click.prevent="setAsDefaultAgent(agent.id)"
+                  class="default-icon"
+                />
               </div>
-              <div class="agent-card-description">{{ agent.description }}</div>
+
+              <div class="agent-card-description">
+                {{ agent.description || '' }}
+              </div>
             </div>
           </div>
         </div>
       </a-modal>
 
+      <a-modal
+        v-model:open="createConfigModalOpen"
+        title="新建配置"
+        :width="320"
+        :confirmLoading="createConfigLoading"
+        @ok="handleCreateConfig"
+        @cancel="() => (createConfigModalOpen = false)"
+      >
+        <a-input v-model:value="createConfigName" placeholder="请输入配置名称" allow-clear />
+      </a-modal>
+
       <!-- 中间内容区域 -->
       <div class="content">
         <AgentChatComponent
-          :state="state"
+          ref="chatComponentRef"
           :single-mode="false"
           @open-config="toggleConf"
           @open-agent-modal="openAgentModal"
-          @close-config-sidebar="() => state.isConfigSidebarOpen = false"
+          @close-config-sidebar="() => (chatUIStore.isConfigSidebarOpen = false)"
         >
+          <template #header-right>
+            <a-dropdown v-if="selectedAgentId" :trigger="['click']">
+              <div type="button" class="agent-nav-btn">
+                <Settings2 size="18" class="nav-btn-icon" />
+                <span class="text hide-text">
+                  {{ selectedConfigSummary?.name || '配置' }}
+                </span>
+                <ChevronDown size="16" class="nav-btn-icon" />
+              </div>
+              <template #overlay>
+                <a-menu
+                  :selectedKeys="selectedAgentConfigId ? [String(selectedAgentConfigId)] : []"
+                >
+                  <a-menu-item
+                    v-for="cfg in agentConfigs[selectedAgentId] || []"
+                    :key="String(cfg.id)"
+                    @click="selectAgentConfig(cfg.id)"
+                  >
+                    <div class="menu-item-full">
+                      <Star
+                        :size="14"
+                        :fill="cfg.is_default ? 'currentColor' : 'none'"
+                        :style="{
+                          color: cfg.is_default ? 'var(--color-warning-500)' : 'var(--gray-400)'
+                        }"
+                      />
+                      <span>{{ cfg.name }}</span>
+                    </div>
+                  </a-menu-item>
+                  <a-menu-divider v-if="userStore.isAdmin" />
+                  <a-menu-item
+                    v-if="userStore.isAdmin"
+                    key="create_config"
+                    @click="openCreateConfigModal"
+                  >
+                    <div class="menu-item-layout">
+                      <Plus :size="16" />
+                      <span>新建配置</span>
+                    </div>
+                  </a-menu-item>
+                  <a-menu-item
+                    v-if="userStore.isAdmin"
+                    key="open_config"
+                    @click="openConfigSidebar"
+                  >
+                    <div class="menu-item-layout">
+                      <SquarePen :size="16" />
+                      <span>编辑当前配置</span>
+                    </div>
+                  </a-menu-item>
+                </a-menu>
+              </template>
+            </a-dropdown>
+            <div
+              v-if="selectedAgentId"
+              ref="moreButtonRef"
+              type="button"
+              class="agent-nav-btn"
+              @click="toggleMoreMenu"
+            >
+              <Ellipsis size="18" class="nav-btn-icon" />
+            </div>
+          </template>
         </AgentChatComponent>
       </div>
 
       <!-- 配置侧边栏 -->
       <AgentConfigSidebar
-        :isOpen="state.isConfigSidebarOpen"
-        @close="() => state.isConfigSidebarOpen = false"
+        :isOpen="chatUIStore.isConfigSidebarOpen"
+        @close="() => (chatUIStore.isConfigSidebarOpen = false)"
       />
-    </div>
 
-    <!-- 悬浮窗 -->
-    <FloatingAgentWindow
-      v-model:visible="state.isFloatingWindowOpen"
-      @close="() => state.isFloatingWindowOpen = false"
-    />
+      <!-- 反馈模态框 -->
+      <FeedbackModalComponent ref="feedbackModal" :agent-id="selectedAgentId" />
+
+      <!-- 自定义更多菜单 -->
+      <Teleport to="body">
+        <Transition name="menu-fade">
+          <div
+            v-if="chatUIStore.moreMenuOpen"
+            ref="moreMenuRef"
+            class="more-popup-menu"
+            :style="{
+              left: chatUIStore.moreMenuPosition.x + 'px',
+              top: chatUIStore.moreMenuPosition.y + 'px'
+            }"
+          >
+            <div class="menu-item" @click="handleShareChat">
+              <ShareAltOutlined class="menu-icon" />
+              <span class="menu-text">分享对话</span>
+            </div>
+            <div class="menu-item" @click="handleFeedback">
+              <MessageOutlined class="menu-icon" />
+              <span class="menu-text">查看反馈</span>
+            </div>
+            <div class="menu-item" @click="handlePreview">
+              <EyeOutlined class="menu-icon" />
+              <span class="menu-text">预览页面</span>
+            </div>
+          </div>
+        </Transition>
+      </Teleport>
+    </div>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, reactive, watch, computed, h } from 'vue';
-import { useRouter } from 'vue-router';
+import { ref, watch } from 'vue'
 import {
-  SettingOutlined,
-  LinkOutlined,
   StarOutlined,
   StarFilled,
-} from '@ant-design/icons-vue';
-import { message } from 'ant-design-vue';
-import { Bot, Maximize2 } from 'lucide-vue-next';
-import AgentChatComponent from '@/components/AgentChatComponent.vue';
-import AgentConfigSidebar from '@/components/AgentConfigSidebar.vue';
-import FloatingAgentWindow from '@/components/FloatingAgentWindow.vue';
-import { useUserStore } from '@/stores/user';
-import { useAgentStore } from '@/stores/agent';
-import { useInfoStore } from '@/stores/info';
+  MessageOutlined,
+  ShareAltOutlined,
+  EyeOutlined
+} from '@ant-design/icons-vue'
+import { message } from 'ant-design-vue'
+import { Settings2, Ellipsis, ChevronDown, Star, Plus, SquarePen } from 'lucide-vue-next'
+import AgentChatComponent from '@/components/AgentChatComponent.vue'
+import AgentConfigSidebar from '@/components/AgentConfigSidebar.vue'
+import FeedbackModalComponent from '@/components/dashboard/FeedbackModalComponent.vue'
+import { useUserStore } from '@/stores/user'
+import { useAgentStore } from '@/stores/agent'
+import { useChatUIStore } from '@/stores/chatUI'
+import { ChatExporter } from '@/utils/chatExporter'
+import { handleChatError } from '@/utils/errorHandler'
+import { onClickOutside } from '@vueuse/core'
 
-import { storeToRefs } from 'pinia';
+import { storeToRefs } from 'pinia'
 
-// 路由和stores
-const router = useRouter();
-const userStore = useUserStore();
-const agentStore = useAgentStore();
-const infoStore = useInfoStore();
+// 组件引用
+const feedbackModal = ref(null)
+const chatComponentRef = ref(null)
 
-// 从store中获取响应式状态
+// Stores
+const userStore = useUserStore()
+const agentStore = useAgentStore()
+const chatUIStore = useChatUIStore()
+
+// 从 agentStore 中获取响应式状态
 const {
   agents,
   selectedAgentId,
   defaultAgentId,
-  agentConfig,
-  selectedAgent,
-  configurableItems,
-} = storeToRefs(agentStore);
-const state = reactive({
-  agentModalOpen: false,
-  isConfigSidebarOpen: false,
-  isFloatingWindowOpen: false,
-  isEmptyConfig: computed(() =>
-    !selectedAgentId.value ||
-    Object.keys(configurableItems.value || {}).length === 0
-  )
-});
-
-
-
-// 本地状态（仅UI相关）
+  agentConfigs,
+  selectedAgentConfigId,
+  selectedConfigSummary
+} = storeToRefs(agentStore)
 
 // 设置为默认智能体
 const setAsDefaultAgent = async (agentId) => {
-  if (!agentId || !userStore.isAdmin) return;
+  if (!agentId || !userStore.isAdmin) return
 
   try {
-    await agentStore.setDefaultAgent(agentId);
-    message.success('已将当前智能体设为默认');
+    await agentStore.setDefaultAgent(agentId)
+    message.success('已将当前智能体设为默认')
   } catch (error) {
-    console.error('设置默认智能体错误:', error);
-    message.error(error.message || '设置默认智能体时发生错误');
+    console.error('设置默认智能体错误:', error)
+    message.error(error.message || '设置默认智能体时发生错误')
   }
-};
-
-
-
-
+}
 
 // 这些方法现在由agentStore处理，无需在组件中定义
 
-// 加载智能体配置（使用store方法）
-const loadAgentConfig = async () => {
-  try {
-    await agentStore.loadAgentConfig();
-  } catch (error) {
-    console.error('加载配置出错:', error);
-    message.error('加载配置失败');
-  }
-};
-
-const handleModelChange = (data) => {
-  agentConfig.value.model = `${data.provider}/${data.name}`;
-}
-
-
-// 监听智能体选择变化
-watch(
-  () => selectedAgentId.value,
-  () => {
-    loadAgentConfig();
-  }
-);
-
 // 选择智能体（使用store方法）
-const selectAgent = (agentId) => {
-  agentStore.selectAgent(agentId);
-  // 加载该智能体的配置
-  loadAgentConfig();
-};
+const selectAgent = async (agentId) => {
+  await agentStore.selectAgent(agentId)
+}
 
 // 打开智能体选择弹窗
 const openAgentModal = () => {
-  state.agentModalOpen = true;
-};
-
-// 从弹窗中选择智能体
-const selectAgentFromModal = (agentId) => {
-  selectAgent(agentId);
-  state.agentModalOpen = false;
-};
-
-
-
-
-
-// 获取配置标签
-const getConfigLabel = (key, value) => {
-  // 根据配置项属性选择合适的显示文本
-  if (value.description && value.name !== key) {
-    return `${value.name}（${key}）`;
-  }
-  return key;
-};
-
-// 获取占位符
-const getPlaceholder = (key, value) => {
-  // 返回描述作为占位符
-  return `（默认: ${value.default}）` ;
-};
-
-// 跳转到独立智能体页面
-const goToAgentPage = () => {
-  if (selectedAgentId.value) {
-    window.open(`/agent/${selectedAgentId.value}`, '_blank');
-  }
-};
-
-const toggleConf = () => {
-  state.isConfigSidebarOpen = !state.isConfigSidebarOpen
+  chatUIStore.agentModalOpen = true
 }
 
-// 打开悬浮窗
-const openFloatingWindow = () => {
-  state.isFloatingWindowOpen = true;
+// 从弹窗中选择智能体
+const selectAgentFromModal = async (agentId) => {
+  await selectAgent(agentId)
+  chatUIStore.agentModalOpen = false
+}
+
+const toggleConf = () => {
+  chatUIStore.isConfigSidebarOpen = !chatUIStore.isConfigSidebarOpen
+}
+
+const openConfigSidebar = () => {
+  chatUIStore.isConfigSidebarOpen = true
+}
+
+const createConfigModalOpen = ref(false)
+const createConfigLoading = ref(false)
+const createConfigName = ref('')
+
+const openCreateConfigModal = () => {
+  createConfigName.value = ''
+  createConfigModalOpen.value = true
+}
+
+const handleCreateConfig = async () => {
+  if (!selectedAgentId.value) return
+  if (!createConfigName.value) {
+    message.error('请输入配置名称')
+    return
+  }
+
+  createConfigLoading.value = true
+  try {
+    await agentStore.createAgentConfigProfile({
+      name: createConfigName.value,
+      setDefault: false,
+      fromCurrent: false
+    })
+    createConfigModalOpen.value = false
+    chatUIStore.isConfigSidebarOpen = true
+    message.success('配置已创建')
+  } catch (error) {
+    console.error('创建配置出错:', error)
+    message.error(error.message || '创建配置失败')
+  } finally {
+    createConfigLoading.value = false
+  }
+}
+
+const selectAgentConfig = async (configId) => {
+  try {
+    await agentStore.selectAgentConfig(configId)
+  } catch (error) {
+    console.error('切换配置出错:', error)
+    message.error('切换配置失败')
+  }
+}
+
+// 更多菜单相关
+const moreMenuRef = ref(null)
+const moreButtonRef = ref(null)
+
+const toggleMoreMenu = (event) => {
+  event.stopPropagation()
+  // 切换状态，而不是只打开
+  chatUIStore.moreMenuOpen = !chatUIStore.moreMenuOpen
+
+  if (chatUIStore.moreMenuOpen) {
+    // 只在打开时计算位置
+    const rect = event.currentTarget.getBoundingClientRect()
+    chatUIStore.openMoreMenu(rect.right - 130, rect.bottom + 8)
+  }
+}
+
+const closeMoreMenu = () => {
+  chatUIStore.closeMoreMenu()
+}
+
+// 使用 VueUse 的 onClickOutside
+onClickOutside(
+  moreMenuRef,
+  () => {
+    if (chatUIStore.moreMenuOpen) {
+      closeMoreMenu()
+    }
+  },
+  { ignore: [moreButtonRef] }
+)
+
+const handleShareChat = async () => {
+  closeMoreMenu()
+
+  try {
+    // 从聊天组件获取导出数据
+    const exportData = chatComponentRef.value?.getExportPayload?.()
+
+    console.log('[AgentView] Export data:', exportData)
+
+    if (!exportData) {
+      message.warning('当前没有可导出的对话内容')
+      return
+    }
+
+    // 检查是否有实际的消息内容
+    const hasMessages = exportData.messages && exportData.messages.length > 0
+    const hasOngoingMessages = exportData.onGoingMessages && exportData.onGoingMessages.length > 0
+
+    if (!hasMessages && !hasOngoingMessages) {
+      console.warn('[AgentView] Export data has no messages:', {
+        messages: exportData.messages,
+        onGoingMessages: exportData.onGoingMessages
+      })
+      message.warning('当前对话暂无内容可导出，请先进行对话')
+      return
+    }
+
+    const result = await ChatExporter.exportToHTML(exportData)
+    message.success(`对话已导出为HTML文件: ${result.filename}`)
+  } catch (error) {
+    console.error('[AgentView] Export error:', error)
+    if (error?.message?.includes('没有可导出的对话内容')) {
+      message.warning('当前对话暂无内容可导出，请先进行对话')
+      return
+    }
+    handleChatError(error, 'export')
+  }
+}
+
+const handleFeedback = () => {
+  closeMoreMenu()
+  feedbackModal.value?.show()
+}
+
+const handlePreview = () => {
+  closeMoreMenu()
+  if (selectedAgentId.value) {
+    window.open(`/agent/${selectedAgentId.value}`, '_blank')
+  }
 }
 </script>
 
@@ -251,46 +379,6 @@ const openFloatingWindow = () => {
   width: 100%;
   height: 100vh;
   overflow: hidden;
-  --agent-view-header-height: 54px;
-}
-
-.agent-view-header {
-  height: var(--agent-view-header-height);
-  background-color: var(--bg-sider);
-  border-bottom: 1px solid var(--gray-100);
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 2px 16px;
-
-  .header-left,
-  .header-right,
-  .header-center {
-    display: flex;
-    flex-direction: row;
-    gap: 10px;
-  }
-
-  .header-item {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-
-    span.brandname {
-      font-size: 18px;
-      font-weight: 600;
-      color: var(--text-primary);
-      margin-right: 16px;
-    }
-
-    button.header-button {
-      border-radius: 6px;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      border-color: var(--gray-100);
-    }
-  }
 }
 
 .agent-view-body {
@@ -299,11 +387,9 @@ const openFloatingWindow = () => {
   flex-direction: row;
   width: 100%;
   flex: 1;
-  min-height: calc(100% - var(--agent-view-header-height));
+  height: 100%;
   overflow: hidden;
   position: relative;
-  // padding: var(--gap-radius);
-  // gap: var(--gap-radius);
 
   .content {
     flex: 1;
@@ -358,8 +444,6 @@ const openFloatingWindow = () => {
   }
 }
 
-
-
 .agent-model {
   width: 100%;
 }
@@ -367,7 +451,7 @@ const openFloatingWindow = () => {
 .config-modal-content {
   user-select: text;
 
-  div[role="alert"] {
+  div[role='alert'] {
     margin-bottom: 10px;
   }
 
@@ -399,7 +483,7 @@ const openFloatingWindow = () => {
 }
 
 .action-button {
-  background-color: white;
+  background-color: var(--gray-0);
   border: 1px solid var(--main-20);
   text-align: left;
   height: auto;
@@ -446,12 +530,6 @@ const openFloatingWindow = () => {
       white-space: pre-wrap;
     }
   }
-
-  .default-icon {
-    color: #faad14;
-    font-size: 14px;
-    margin-left: 4px;
-  }
 }
 // 工具选择器样式（与项目风格一致）
 .tools-selector {
@@ -481,7 +559,7 @@ const openFloatingWindow = () => {
     .select-tools-btn {
       background: var(--main-color);
       border: none;
-      color: #fff;
+      color: var(--gray-0);
       border-radius: 6px;
       padding: 4px 12px;
       font-size: 13px;
@@ -533,11 +611,11 @@ const openFloatingWindow = () => {
 .tools-modal {
   :deep(.ant-modal-content) {
     border-radius: 8px;
-    box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
     overflow: hidden;
   }
   :deep(.ant-modal-header) {
-    background: #fff;
+    background: var(--gray-0);
     border-bottom: 1px solid var(--gray-200);
     padding: 16px 20px;
     .ant-modal-title {
@@ -548,7 +626,7 @@ const openFloatingWindow = () => {
   }
   :deep(.ant-modal-body) {
     padding: 20px;
-    background: #fff;
+    background: var(--gray-0);
   }
   .tools-modal-content {
     .tools-search {
@@ -570,14 +648,18 @@ const openFloatingWindow = () => {
       border: 1px solid var(--gray-200);
       border-radius: 8px;
       margin-bottom: 16px;
-      background: #fff;
+      background: var(--gray-0);
       .tool-item {
         padding: 14px 16px;
         border-bottom: 1px solid var(--gray-100);
         cursor: pointer;
-        transition: background 0.2s, border 0.2s;
+        transition:
+          background 0.2s,
+          border 0.2s;
         border-left: 3px solid transparent;
-        &:last-child { border-bottom: none; }
+        &:last-child {
+          border-bottom: none;
+        }
         &:hover {
           background: var(--gray-50);
         }
@@ -596,7 +678,9 @@ const openFloatingWindow = () => {
               color: var(--gray-900);
               font-size: 14px;
             }
-            .tool-indicator { display: none; }
+            .tool-indicator {
+              display: none;
+            }
           }
           .tool-description {
             font-size: 13px;
@@ -609,7 +693,6 @@ const openFloatingWindow = () => {
             overflow: hidden;
             text-overflow: ellipsis;
           }
-
         }
       }
     }
@@ -638,7 +721,7 @@ const openFloatingWindow = () => {
           &.ant-btn-default {
             border: 1px solid var(--gray-300);
             color: var(--gray-900);
-            background: #fff;
+            background: var(--gray-0);
             &:hover {
               border-color: var(--main-color);
               color: var(--main-color);
@@ -648,7 +731,7 @@ const openFloatingWindow = () => {
           &.ant-btn-primary {
             background: var(--main-color);
             border: none;
-            color: #fff;
+            color: var(--gray-0);
             &:hover {
               background: var(--main-color);
             }
@@ -683,7 +766,7 @@ const openFloatingWindow = () => {
     padding: 8px 12px;
     cursor: pointer;
     transition: all 0.2s ease;
-    background: white;
+    background: var(--gray-0);
     user-select: none;
 
     &:hover {
@@ -754,7 +837,7 @@ const openFloatingWindow = () => {
   border: 1px solid var(--gray-300);
   border-radius: 8px;
   padding: 8px 12px;
-  background: white;
+  background: var(--gray-0);
   transition: border-color 0.2s ease;
 
   &:hover {
@@ -771,11 +854,6 @@ const openFloatingWindow = () => {
       color: var(--gray-900);
       font-weight: 500;
     }
-
-    .default-icon {
-      color: #faad14;
-      font-size: 14px;
-    }
   }
 }
 
@@ -787,7 +865,7 @@ const openFloatingWindow = () => {
   }
 
   :deep(.ant-modal-header) {
-    background: #fff;
+    background: var(--gray-0);
     border-bottom: 1px solid var(--gray-200);
     padding: 16px 20px;
 
@@ -800,7 +878,7 @@ const openFloatingWindow = () => {
 
   :deep(.ant-modal-body) {
     padding: 20px;
-    background: #fff;
+    background: var(--gray-0);
   }
 
   .agent-modal-content {
@@ -818,7 +896,7 @@ const openFloatingWindow = () => {
       padding: 16px;
       cursor: pointer;
       transition: border-color 0.2s ease;
-      background: white;
+      background: var(--gray-0);
 
       &:hover {
         border-color: var(--main-color);
@@ -831,9 +909,6 @@ const openFloatingWindow = () => {
         margin-bottom: 12px;
 
         .agent-card-title {
-          display: flex;
-          align-items: center;
-          gap: 8px;
           flex: 1;
 
           .agent-card-name {
@@ -842,11 +917,17 @@ const openFloatingWindow = () => {
             color: var(--gray-900);
             line-height: 1.4;
           }
+        }
 
-          .default-icon {
-            color: #faad14;
-            font-size: 16px;
-            flex-shrink: 0;
+        .default-icon {
+          color: var(--color-warning-500);
+          font-size: 16px;
+          flex-shrink: 0;
+          margin-left: 8px;
+          cursor: pointer;
+
+          &:hover {
+            color: var(--color-warning-600);
           }
         }
       }
@@ -862,7 +943,6 @@ const openFloatingWindow = () => {
         text-overflow: ellipsis;
       }
 
-
       &.selected {
         border-color: var(--main-color);
         background: var(--main-20);
@@ -876,7 +956,6 @@ const openFloatingWindow = () => {
           color: var(--gray-900);
         }
       }
-
     }
   }
 }
@@ -892,8 +971,105 @@ const openFloatingWindow = () => {
   }
 }
 
-</style>
+// 自定义更多菜单样式
+.more-popup-menu {
+  position: fixed;
+  min-width: 100px;
+  background: var(--gray-0);
+  border-radius: 10px;
+  box-shadow:
+    0 8px 24px rgba(0, 0, 0, 0.08),
+    0 2px 8px rgba(0, 0, 0, 0.04);
+  border: 1px solid var(--gray-100);
+  padding: 4px;
+  z-index: 9999;
 
+  .menu-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+    font-size: 14px;
+    color: var(--gray-900);
+    position: relative;
+    user-select: none;
+
+    .menu-icon {
+      font-size: 16px;
+      color: var(--gray-600);
+      transition: color 0.15s ease;
+      flex-shrink: 0;
+    }
+
+    .menu-text {
+      font-weight: 400;
+      letter-spacing: 0.01em;
+    }
+
+    &:hover {
+      background: var(--gray-50);
+      // color: var(--main-700);
+
+      // .menu-icon {
+      //   color: var(--main-600);
+      // }
+    }
+
+    &:active {
+      background: var(--gray-100);
+    }
+  }
+
+  .menu-divider {
+    height: 1px;
+    background: var(--gray-100);
+    margin: 4px 8px;
+  }
+}
+
+// 菜单淡入淡出动画
+.menu-fade-enter-active {
+  animation: menuSlideIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.menu-fade-leave-active {
+  animation: menuSlideOut 0.15s cubic-bezier(0.4, 0, 1, 1);
+}
+
+@keyframes menuSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes menuSlideOut {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+// 响应式优化
+@media (max-width: 520px) {
+  .more-popup-menu {
+    box-shadow:
+      0 12px 32px rgba(0, 0, 0, 0.12),
+      0 4px 12px rgba(0, 0, 0, 0.06);
+  }
+}
+</style>
 
 <style lang="less">
 .toggle-conf {
@@ -928,13 +1104,32 @@ const openFloatingWindow = () => {
   }
 }
 
-
 // 针对 Ant Design Select 组件的深度样式修复
 :deep(.ant-select-item-option-content) {
   .agent-option-name {
     color: var(--main-color);
     font-size: 14px;
     font-weight: 500;
+  }
+}
+
+// 菜单项布局样式
+.menu-item-layout {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.menu-item-full {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+}
+
+@media (max-width: 768px) {
+  .hide-text {
+    display: none;
   }
 }
 </style>

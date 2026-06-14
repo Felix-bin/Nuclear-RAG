@@ -1,285 +1,523 @@
 <template>
-<div class="database-info-container">
-  <DatabaseHeader />
+  <div class="database-info-container">
+    <FileDetailModal />
 
-  <!-- Maximize Graph Modal -->
-  <a-modal
-    v-model:open="isGraphMaximized"
-    :footer="null"
-    :closable="false"
-    width="100%"
-    wrap-class-name="full-modal"
-    :mask-closable="false"
-  >
-    <template #title>
-      <div class="maximized-graph-header">
-        <h3>知识图谱 (最大化)</h3>
-        <a-button type="text" @click="toggleGraphMaximize">
-          <CompressOutlined /> 退出最大化
-        </a-button>
+    <!-- 检索配置弹窗 -->
+    <SearchConfigModal
+      v-model="searchConfigModalVisible"
+      :database-id="databaseId"
+      @save="handleSearchConfigSave"
+    />
+
+    <FileUploadModal
+      v-model:visible="addFilesModalVisible"
+      :folder-tree="folderTree"
+      :current-folder-id="currentFolderId"
+      :is-folder-mode="isFolderUploadMode"
+      :mode="addFilesMode"
+      @success="onFileUploadSuccess"
+    />
+
+    <div class="unified-layout">
+      <div class="left-panel" :style="{ width: leftPanelWidth + '%' }">
+        <KnowledgeBaseCard />
+        <!-- 待处理文件提示条 -->
+        <div class="info-panel" v-if="pendingParseCount > 0 || pendingIndexCount > 0">
+          <div class="banner-item" v-if="pendingParseCount > 0" @click="confirmBatchParse">
+            <FileText :size="14" />
+            <span>{{ pendingParseCount }} 个文件待解析，点击解析</span>
+          </div>
+          <div class="banner-item" v-if="pendingIndexCount > 0" @click="confirmBatchIndex">
+            <Database :size="14" />
+            <span>{{ pendingIndexCount }} 个文件待入库，点击入库</span>
+          </div>
+        </div>
+        <FileTable
+          :right-panel-visible="state.rightPanelVisible"
+          @show-add-files-modal="showAddFilesModal"
+          @toggle-right-panel="toggleRightPanel"
+        />
       </div>
-    </template>
-    <div class="maximized-graph-content">
-      <div v-if="!isGraphSupported" class="graph-disabled">
-        <div class="disabled-content">
-          <h4>知识图谱不可用</h4>
-          <p>当前知识库类型 "{{ getKbTypeLabel(database.kb_type || 'lightrag') }}" 不支持知识图谱功能。</p>
-          <p>只有 LightRAG 类型的知识库支持知识图谱。</p>
-        </div>
+
+      <div class="resize-handle" ref="resizeHandle"></div>
+
+      <div
+        class="right-panel"
+        :style="{
+          width: 100 - leftPanelWidth + '%',
+          display: store.state.rightPanelVisible ? 'flex' : 'none'
+        }"
+      >
+        <a-tabs
+          v-model:activeKey="activeTab"
+          class="knowledge-tabs"
+          :tabBarStyle="{ margin: 0, padding: '0 16px' }"
+        >
+          <template #rightExtra>
+            <a-tooltip title="检索配置" placement="bottom">
+              <a-button type="text" class="config-btn" @click="openSearchConfigModal">
+                <SettingOutlined />
+                <span class="config-text">检索配置</span>
+              </a-button>
+            </a-tooltip>
+          </template>
+          <a-tab-pane key="graph" tab="知识图谱" v-if="isGraphSupported">
+            <KnowledgeGraphSection
+              :visible="true"
+              :active="activeTab === 'graph'"
+              @toggle-visible="() => {}"
+            />
+          </a-tab-pane>
+          <a-tab-pane key="query" tab="检索测试">
+            <QuerySection ref="querySectionRef" :visible="true" @toggle-visible="() => {}" />
+          </a-tab-pane>
+          <a-tab-pane key="mindmap" tab="知识导图">
+            <MindMapSection v-if="databaseId" :database-id="databaseId" ref="mindmapSectionRef" />
+          </a-tab-pane>
+          <a-tab-pane key="evaluation" tab="RAG评估" :disabled="!isEvaluationSupported">
+            <template #tab>
+              <span :style="{ color: !isEvaluationSupported ? 'var(--gray-400)' : '' }">
+                RAG评估
+                <a-tooltip v-if="!isEvaluationSupported" title="仅支持 Milvus 类型的知识库">
+                  <Info :size="14" style="margin-left: 4px; vertical-align: middle" />
+                </a-tooltip>
+              </span>
+            </template>
+            <RAGEvaluationTab
+              v-if="databaseId && isEvaluationSupported"
+              :database-id="databaseId"
+              @switch-to-benchmarks="activeTab = 'benchmarks'"
+            />
+          </a-tab-pane>
+          <a-tab-pane key="benchmarks" tab="评估基准" :disabled="!isEvaluationSupported">
+            <template #tab>
+              <span :style="{ color: !isEvaluationSupported ? 'var(--gray-400)' : '' }">
+                评估基准
+                <a-tooltip v-if="!isEvaluationSupported" title="仅支持 Milvus 类型的知识库">
+                  <Info :size="14" style="margin-left: 4px; vertical-align: middle" />
+                </a-tooltip>
+              </span>
+            </template>
+            <div class="benchmark-management-container">
+              <div class="benchmark-content">
+                <EvaluationBenchmarks
+                  v-if="databaseId && isEvaluationSupported"
+                  :database-id="databaseId"
+                  @benchmark-selected="
+                    (benchmark) => {
+                      // 处理基准选择逻辑
+                      activeTab = 'evaluation'
+                    }
+                  "
+                  @refresh="
+                    () => {
+                      // 刷新逻辑
+                    }
+                  "
+                />
+              </div>
+            </div>
+          </a-tab-pane>
+        </a-tabs>
       </div>
-      <KnowledgeGraphViewer
-        v-else-if="isGraphMaximized"
-        :initial-database-id="databaseId"
-        :hide-db-selector="true"
-      />
-    </div>
-  </a-modal>
-
-  <FileDetailModal />
-
-  <FileUploadModal
-    v-model:visible="addFilesModalVisible"
-  />
-
-  <div class="unified-layout">
-    <!-- 侧边栏 -->
-    <div class="sidebar" :style="{ width: sidebarWidth + 'px' }">
-      <!-- CodeHub 知识库：显示选择列表 -->
-      <a-menu
-        v-if="isCodeHubDatabase"
-        v-model:selectedKeys="selectedMenuKeys"
-        mode="inline"
-        class="sidebar-menu"
-        @select="handleMenuSelect"
-      >
-        <a-menu-item key="graph">
-          <template #icon>
-            <DeploymentUnitOutlined />
-          </template>
-          <span>知识图谱</span>
-        </a-menu-item>
-        <a-menu-item key="repositories">
-          <template #icon>
-            <FolderOutlined />
-          </template>
-          <span>代码仓库</span>
-        </a-menu-item>
-        <a-menu-item key="query">
-          <template #icon>
-            <SearchOutlined />
-          </template>
-          <span>检索测试</span>
-        </a-menu-item>
-      </a-menu>
-      <!-- 其他知识库：显示菜单 -->
-      <a-menu
-        v-else
-        v-model:selectedKeys="selectedMenuKeys"
-        mode="inline"
-        class="sidebar-menu"
-        @select="handleMenuSelect"
-      >
-        <a-menu-item key="files">
-          <template #icon>
-            <FileTextOutlined />
-          </template>
-          <span>文件列表</span>
-        </a-menu-item>
-        <a-menu-item key="query">
-          <template #icon>
-            <SearchOutlined />
-          </template>
-          <span>检索测试</span>
-        </a-menu-item>
-      </a-menu>
-    </div>
-
-    <!-- 侧边栏拖拽手柄 -->
-    <div
-      class="resize-handle-left"
-      ref="resizeHandleLeft"
-    ></div>
-
-    <!-- 主内容区域 -->
-    <div class="main-content" :style="{ width: `calc(100% - ${sidebarWidth}px - 4px)` }">
-      <!-- CodeHub 知识库：显示知识图谱、代码仓库和检索测试 -->
-      <template v-if="isCodeHubDatabase">
-        <!-- 知识图谱视图 -->
-        <div v-if="activeView === 'graph'" class="content-view graph-view">
-          <KnowledgeGraphViewer
-            :initial-database-id="databaseId"
-            :hide-db-selector="true"
-            :hide-controls="false"
-            :kb-type="'codehub'"
-            :initial-limit="200"
-          />
-        </div>
-        <!-- 代码仓库视图 -->
-        <div v-if="activeView === 'repositories'" class="content-view">
-          <CodeHubRepositories />
-        </div>
-        <!-- 检索测试视图 -->
-        <div v-if="activeView === 'query'" class="content-view query-view">
-          <QuerySection
-            :visible="true"
-          />
-        </div>
-      </template>
-      <!-- 其他知识库：显示文件列表和检索测试 -->
-      <template v-else>
-        <!-- 文件列表视图 -->
-        <div v-if="activeView === 'files'" class="content-view">
-          <FileTable
-            :right-panel-visible="false"
-            @show-add-files-modal="showAddFilesModal"
-          />
-        </div>
-
-        <!-- 检索测试视图 -->
-        <div v-if="activeView === 'query'" class="content-view query-view">
-          <QuerySection
-            :visible="true"
-          />
-        </div>
-      </template>
     </div>
   </div>
-</div>
 </template>
 
 <script setup>
-import { onMounted, reactive, ref, watch, onUnmounted, computed } from 'vue';
-import { useRoute } from 'vue-router';
-import { useDatabaseStore } from '@/stores/database';
-import { getKbTypeLabel } from '@/utils/kb_utils';
-import { CompressOutlined, FileTextOutlined, SearchOutlined, FolderOutlined, DeploymentUnitOutlined } from '@ant-design/icons-vue';
-import KnowledgeGraphViewer from '@/components/KnowledgeGraphViewer.vue';
-import DatabaseHeader from '@/components/DatabaseHeader.vue';
-import FileTable from '@/components/FileTable.vue';
-import FileDetailModal from '@/components/FileDetailModal.vue';
-import FileUploadModal from '@/components/FileUploadModal.vue';
-import QuerySection from '@/components/QuerySection.vue';
-import CodeHubRepositories from '@/components/CodeHubRepositories.vue';
+import { onMounted, reactive, ref, watch, onUnmounted, computed } from 'vue'
+import { useRoute } from 'vue-router'
+import { useDatabaseStore } from '@/stores/database'
+import { useTaskerStore } from '@/stores/tasker'
+import { Info, FileText, Database } from 'lucide-vue-next'
+import { SettingOutlined } from '@ant-design/icons-vue'
+import { Modal } from 'ant-design-vue'
+import KnowledgeBaseCard from '@/components/KnowledgeBaseCard.vue'
+import FileTable from '@/components/FileTable.vue'
+import FileDetailModal from '@/components/FileDetailModal.vue'
+import FileUploadModal from '@/components/FileUploadModal.vue'
+import KnowledgeGraphSection from '@/components/KnowledgeGraphSection.vue'
+import QuerySection from '@/components/QuerySection.vue'
+import MindMapSection from '@/components/MindMapSection.vue'
+import RAGEvaluationTab from '@/components/RAGEvaluationTab.vue'
+import EvaluationBenchmarks from '@/components/EvaluationBenchmarks.vue'
+import SearchConfigModal from '@/components/SearchConfigModal.vue'
 
-const route = useRoute();
-const store = useDatabaseStore();
+const route = useRoute()
+const store = useDatabaseStore()
+const taskerStore = useTaskerStore()
 
-const databaseId = computed(() => store.databaseId);
-const database = computed(() => store.database || {});
-const state = computed(() => store.state);
-const isGraphMaximized = computed({
-    get: () => store.state.isGraphMaximized,
-    set: (val) => store.state.isGraphMaximized = val
-});
-
+const databaseId = computed(() => store.databaseId)
+const database = computed(() => store.database)
+const state = computed(() => store.state)
 // 计算属性：是否支持知识图谱
 const isGraphSupported = computed(() => {
-  if (!database.value || !database.value.kb_type) return false;
-  const kbType = database.value.kb_type.toLowerCase();
-  return kbType === 'lightrag';
-});
+  const kbType = database.value.kb_type?.toLowerCase()
+  return kbType === 'lightrag'
+})
 
-// 计算属性：是否是CodeHub类型知识库
-const isCodeHubDatabase = computed(() => {
-  if (!database.value || !database.value.kb_type) return false;
-  const kbType = database.value.kb_type.toLowerCase();
-  return kbType === 'codehub';
-});
+// 计算属性：是否支持评估功能
+const isEvaluationSupported = computed(() => {
+  const kbType = database.value.kb_type?.toLowerCase()
+  return kbType === 'milvus'
+})
 
-// 侧边栏相关
-const sidebarWidth = ref(200);
-const selectedMenuKeys = ref(['files']);
-const activeView = ref('files');
+// 计算待解析文件数量（status: 'uploaded'）
+const pendingParseCount = computed(() => {
+  const files = store.database.files || {}
+  return Object.values(files).filter((f) => !f.is_folder && f.status === 'uploaded').length
+})
 
-// 监听知识库类型变化，调整侧边栏宽度和默认视图
-watch(isCodeHubDatabase, (isCodeHub) => {
-  if (isCodeHub) {
-    sidebarWidth.value = 200;
-    selectedMenuKeys.value = ['graph'];
-    activeView.value = 'graph';
-  } else {
-    sidebarWidth.value = 200;
-    selectedMenuKeys.value = ['files'];
-    activeView.value = 'files';
+// 计算待入库文件数量（status: 'parsed' 或 'error_indexing'）
+const pendingIndexCount = computed(() => {
+  const files = store.database.files || {}
+  const isLightRAG = database.value?.kb_type?.toLowerCase() === 'lightrag'
+  return Object.values(files).filter((f) => {
+    if (f.is_folder) return false
+    if (isLightRAG) {
+      return f.status === 'parsed'
+    }
+    return f.status === 'parsed' || f.status === 'error_indexing'
+  }).length
+})
+
+// 确认批量解析
+const confirmBatchParse = () => {
+  const fileIds = Object.values(store.database.files || {})
+    .filter((f) => f.status === 'uploaded')
+    .map((f) => f.file_id)
+
+  if (fileIds.length === 0) {
+    return
   }
-}, { immediate: true });
 
-const handleMenuSelect = ({ key }) => {
-  activeView.value = key;
-  selectedMenuKeys.value = [key];
-};
+  Modal.confirm({
+    title: '批量解析',
+    content: `确定要解析 ${fileIds.length} 个文件吗？`,
+    onOk: () => store.parseFiles(fileIds)
+  })
+}
 
-const isDraggingSidebar = ref(false);
-const resizeHandleLeft = ref(null);
+// 确认批量入库
+const confirmBatchIndex = () => {
+  const isLightRAG = database.value?.kb_type?.toLowerCase() === 'lightrag'
+  const fileIds = Object.values(store.database.files || {})
+    .filter((f) => {
+      if (f.is_folder) return false
+      if (isLightRAG) return f.status === 'parsed'
+      return f.status === 'parsed' || f.status === 'error_indexing'
+    })
+    .map((f) => f.file_id)
 
-const handleSidebarMouseDown = () => {
-  isDraggingSidebar.value = true;
-  document.addEventListener('mousemove', handleSidebarMouseMove);
-  document.addEventListener('mouseup', handleSidebarMouseUp);
-  document.body.style.cursor = 'col-resize';
-  document.body.style.userSelect = 'none';
-};
+  if (fileIds.length === 0) {
+    return
+  }
 
-const handleSidebarMouseMove = (e) => {
-  if (!isDraggingSidebar.value) return;
-  const container = document.querySelector('.unified-layout');
-  if (!container) return;
-  const containerRect = container.getBoundingClientRect();
-  const newWidth = e.clientX - containerRect.left;
-  sidebarWidth.value = Math.max(150, Math.min(300, newWidth));
-};
+  if (isLightRAG) {
+    Modal.confirm({
+      title: '批量入库',
+      content: `确定要入库 ${fileIds.length} 个文件吗？`,
+      onOk: () => store.indexFiles(fileIds)
+    })
+    return
+  }
 
-const handleSidebarMouseUp = () => {
-  isDraggingSidebar.value = false;
-  document.removeEventListener('mousemove', handleSidebarMouseMove);
-  document.removeEventListener('mouseup', handleSidebarMouseUp);
-  document.body.style.cursor = '';
-  document.body.style.userSelect = '';
-};
+  // 非 LightRAG：触发 FileTable 的入库流程
+  // 暂时简单处理，直接调用 store.indexFiles
+  Modal.confirm({
+    title: '批量入库',
+    content: `确定要入库 ${fileIds.length} 个文件吗？`,
+    onOk: () => store.indexFiles(fileIds)
+  })
+}
 
-// 添加文件弹窗
-const addFilesModalVisible = ref(false);
+// Tab 切换逻辑 - 智能默认
+const activeTab = ref('query')
 
-// 显示添加文件弹窗
-const showAddFilesModal = () => {
-  addFilesModalVisible.value = true;
-};
+// 思维导图引用
+const mindmapSectionRef = ref(null)
 
-// 切换图谱最大化状态
-const toggleGraphMaximize = () => {
-  isGraphMaximized.value = !isGraphMaximized.value;
-};
+// 查询区域引用
+const querySectionRef = ref(null)
 
-watch(() => route.params.database_id, async (newId) => {
-    store.databaseId = newId;
-    store.stopAutoRefresh();
-    await store.getDatabaseInfo(newId);
-    store.startAutoRefresh();
+const resetGraphStats = () => {
+  store.graphStats = {
+    total_nodes: 0,
+    total_edges: 0,
+    displayed_nodes: 0,
+    displayed_edges: 0,
+    is_truncated: false
+  }
+}
+
+// LightRAG 默认展示知识图谱
+watch(
+  () => [databaseId.value, isGraphSupported.value, isEvaluationSupported.value],
+  ([newDbId, supported, evaluationSupported], oldValue = []) => {
+    const [oldDbId, previouslySupported, previouslyEvaluationSupported] = oldValue
+
+    if (!newDbId) {
+      return
+    }
+
+    if (newDbId && newDbId !== oldDbId) {
+      resetGraphStats()
+    } else if (!supported && previouslySupported) {
+      resetGraphStats()
+    }
+
+    if (
+      supported &&
+      (newDbId !== oldDbId || previouslySupported === false || previouslySupported === undefined)
+    ) {
+      activeTab.value = 'graph'
+      return
+    }
+
+    if (!supported && activeTab.value === 'graph') {
+      activeTab.value = 'query'
+    }
+
+    // 如果知识库类型不支持评估功能且当前在评估相关 tab，切换到查询 tab
+    if (
+      !isEvaluationSupported.value &&
+      (activeTab.value === 'evaluation' || activeTab.value === 'benchmarks')
+    ) {
+      activeTab.value = 'query'
+    }
   },
   { immediate: true }
-);
+)
 
-// 组件挂载时
+// 切换右侧面板显示/隐藏
+const toggleRightPanel = () => {
+  store.state.rightPanelVisible = !store.state.rightPanelVisible
+}
+
+// 拖拽调整大小（仅水平方向）
+const leftPanelWidth = ref(50)
+const isDragging = ref(false)
+const resizeHandle = ref(null)
+
+// 检索配置弹窗
+const searchConfigModalVisible = ref(false)
+
+const handleSearchConfigSave = () => {
+  store.getDatabaseInfo()
+}
+
+// 打开检索配置弹窗
+const openSearchConfigModal = () => {
+  searchConfigModalVisible.value = true
+}
+
+// 添加文件弹窗
+const addFilesModalVisible = ref(false)
+const currentFolderId = ref(null)
+const isFolderUploadMode = ref(false)
+const addFilesMode = ref('file')
+
+// 标记是否是初次加载
+const isInitialLoad = ref(true)
+
+// 显示添加文件弹窗
+const showAddFilesModal = (options = {}) => {
+  const { isFolder = false, mode = 'file' } = options
+  isFolderUploadMode.value = isFolder
+  addFilesMode.value = mode
+  addFilesModalVisible.value = true
+  currentFolderId.value = null // 重置
+}
+
+// 传递给 FileUploadModal 的文件夹树
+const folderTree = computed(() => {
+  // 复用 FileTable 中构建文件树的逻辑，或者从 store 中获取
+  // 简单起见，这里假设 store.database.files 是扁平列表，我们在 FileTable 中已经有了构建好的树
+  // 但 FileTable 是子组件，最好将树的构建逻辑放到 store 或 composable 中，或者在这里重新构建
+  // 既然 FileTable 中已经实现了 buildFileTree，我们可以考虑将其提取出来
+  // 为了快速实现，我们这里简单实现一个仅用于选择的树构建
+  const files = store.database.files || {}
+  const fileList = Object.values(files)
+
+  // 构建树的简化版逻辑 (只关心文件夹)
+  const nodeMap = new Map()
+  const roots = []
+
+  // 1. 初始化节点
+  fileList.forEach((file) => {
+    if (file.is_folder) {
+      const item = { ...file, title: file.filename, value: file.file_id, children: [] }
+      nodeMap.set(file.file_id, item)
+    }
+  })
+
+  // 2. 构建层级
+  fileList.forEach((file) => {
+    if (file.is_folder && file.parent_id && nodeMap.has(file.parent_id)) {
+      const parent = nodeMap.get(file.parent_id)
+      const child = nodeMap.get(file.file_id)
+      if (parent && child) {
+        parent.children.push(child)
+      }
+    } else if (file.is_folder && !file.parent_id) {
+      // 只有显式根文件夹才放入 roots
+      // 对于隐式路径生成的文件夹，目前简化处理暂不支持在上传时选择（因为它们没有物理ID）
+      // 除非我们复用 FileTable 的复杂逻辑。
+      // 如果用户只用新建文件夹功能创建文件夹，那么逻辑是够用的。
+      if (nodeMap.has(file.file_id)) {
+        roots.push(nodeMap.get(file.file_id))
+      }
+    }
+  })
+
+  return roots
+})
+
+// 文件上传成功回调
+const onFileUploadSuccess = () => {
+  taskerStore.loadTasks()
+}
+
+// 重置文件选中状态
+const resetFileSelectionState = () => {
+  store.selectedRowKeys = []
+  store.selectedFile = null
+  store.state.fileDetailModalVisible = false
+}
+
+watch(
+  () => route.params.database_id,
+  async (newId, oldId) => {
+    // 切换知识库时，标记为初次加载
+    isInitialLoad.value = true
+
+    store.databaseId = newId
+    resetFileSelectionState()
+    resetGraphStats()
+    store.stopAutoRefresh()
+    await store.getDatabaseInfo(newId, false) // Explicitly load query params on initial load
+    store.startAutoRefresh()
+  },
+  { immediate: true }
+)
+
+// 监听文件列表变化，自动更新思维导图和生成示例问题
+const previousFileCount = ref(0)
+
+watch(
+  () => database.value?.files,
+  (newFiles, oldFiles) => {
+    if (!newFiles) return
+
+    const newFileCount = Object.keys(newFiles).length
+    const oldFileCount = previousFileCount.value
+
+    // 首次加载时，只更新计数，不触发任何操作
+    if (isInitialLoad.value) {
+      previousFileCount.value = newFileCount
+      isInitialLoad.value = false
+      return
+    }
+
+    // 如果文件数量发生变化（增加或减少），只重新生成问题，不自动生成思维导图
+    if (newFileCount !== oldFileCount) {
+      const changeType = newFileCount > oldFileCount ? '增加' : '减少'
+      console.log(`文件数量从 ${oldFileCount} ${changeType}到 ${newFileCount}，准备重新生成问题`)
+
+      // 只要有文件，就重新生成问题（无论之前是否有问题）
+      if (newFileCount > 0) {
+        setTimeout(async () => {
+          console.log('文件数量变化，检查是否需要生成问题，querySectionRef:', querySectionRef.value)
+          if (querySectionRef.value) {
+            // 检查是否开启了自动生成问题
+            if (database.value.additional_params?.auto_generate_questions) {
+              console.log('开始重新生成问题...')
+              await querySectionRef.value.generateSampleQuestions(true)
+            } else {
+              console.log('自动生成问题已关闭，跳过生成')
+            }
+          } else {
+            console.warn('querySectionRef 未准备好，稍后重试')
+            // 如果组件还没准备好，再等一会儿
+            setTimeout(async () => {
+              if (querySectionRef.value) {
+                if (database.value.additional_params?.auto_generate_questions) {
+                  console.log('延迟后开始生成问题...')
+                  await querySectionRef.value.generateSampleQuestions(true)
+                } else {
+                  console.log('自动生成问题已关闭，跳过生成')
+                }
+              }
+            }, 2000)
+          }
+        }, 3000) // 等待3秒让后端处理完成
+      } else {
+        // 如果文件数量变为0，清空问题列表
+        console.log('文件数量为0，清空问题列表')
+        setTimeout(() => {
+          if (querySectionRef.value) {
+            // 清空问题列表
+            querySectionRef.value.clearQuestions()
+          }
+        }, 1000)
+      }
+    }
+
+    previousFileCount.value = newFileCount
+  },
+  { deep: true }
+)
+
+// 组件挂载时启动示例轮播
 onMounted(() => {
-  store.databaseId = route.params.database_id;
-  store.getDatabaseInfo();
-  store.startAutoRefresh();
+  store.databaseId = route.params.database_id
+  resetFileSelectionState()
+  store.getDatabaseInfo()
+  store.startAutoRefresh()
 
-  if (resizeHandleLeft.value) {
-    resizeHandleLeft.value.addEventListener('mousedown', handleSidebarMouseDown);
+  // 添加拖拽事件监听（仅水平方向）
+  if (resizeHandle.value) {
+    resizeHandle.value.addEventListener('mousedown', handleMouseDown)
   }
-});
+})
 
-// 组件卸载时
+// 组件卸载时停止示例轮播
 onUnmounted(() => {
-  store.stopAutoRefresh();
-  if (resizeHandleLeft.value) {
-    resizeHandleLeft.value.removeEventListener('mousedown', handleSidebarMouseDown);
+  store.stopAutoRefresh()
+  if (resizeHandle.value) {
+    resizeHandle.value.removeEventListener('mousedown', handleMouseDown)
   }
-  document.removeEventListener('mousemove', handleSidebarMouseMove);
-  document.removeEventListener('mouseup', handleSidebarMouseUp);
-});
+  document.removeEventListener('mousemove', handleMouseMove)
+  document.removeEventListener('mouseup', handleMouseUp)
+})
 
+// 拖拽调整大小功能
+const handleMouseDown = () => {
+  isDragging.value = true
+  document.addEventListener('mousemove', handleMouseMove)
+  document.addEventListener('mouseup', handleMouseUp)
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+}
+
+const handleMouseMove = (e) => {
+  if (!isDragging.value) return
+
+  const container = document.querySelector('.unified-layout')
+  if (!container) return
+
+  const containerRect = container.getBoundingClientRect()
+  const newWidth = ((e.clientX - containerRect.left) / containerRect.width) * 100
+  leftPanelWidth.value = Math.max(20, Math.min(80, newWidth))
+}
+
+const handleMouseUp = () => {
+  isDragging.value = false
+  document.removeEventListener('mousemove', handleMouseMove)
+  document.removeEventListener('mouseup', handleMouseUp)
+  document.body.style.cursor = ''
+  document.body.style.userSelect = ''
+}
 </script>
 
 <style lang="less" scoped>
@@ -316,145 +554,135 @@ onUnmounted(() => {
 /* Unified Layout Styles */
 .unified-layout {
   display: flex;
-  height: calc(100vh - 54px);
+  height: 100vh;
+  background-color: var(--gray-0);
   gap: 0;
-  position: relative;
-  width: 100%;
 
-  .sidebar {
-    position: relative;
+  .left-panel,
+  .right-panel {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    padding: 8px;
+  }
+
+  .left-panel {
+    display: flex;
     flex-shrink: 0;
-    height: 100%;
-    background-color: #fff;
-    border-right: 1px solid var(--gray-200);
-    z-index: 1;
+    flex-grow: 1;
+    padding-right: 0;
+    flex-direction: column;
+    // max-height: calc(100% - 16px);
+  }
+
+  .info-panel {
+    background: var(--gray-10);
+    border-radius: 12px;
+    border: 1px solid var(--gray-200);
+    display: flex;
+    gap: 12px;
+    padding: 8px 12px;
+    margin-bottom: 8px;
+    flex-shrink: 0;
+
+    .banner-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      background: var(--color-info-50);
+      border-left: 3px solid var(--color-info-500);
+      border-radius: 2px;
+      font-size: 13px;
+      color: var(--color-info-700);
+      cursor: pointer;
+      transition: all 0.2s;
+
+      &:hover {
+        background: var(--color-info-100);
+      }
+
+      svg {
+        color: var(--color-info-500);
+      }
+    }
+  }
+
+  .right-panel {
+    flex-grow: 1;
     overflow: hidden;
     display: flex;
     flex-direction: column;
-
-    .sidebar-menu {
-      border-right: none;
-      height: 100%;
-      padding: 8px 0;
-      overflow-y: auto;
-      overflow-x: hidden;
-
-      :deep(.ant-menu-item) {
-        margin: 4px 8px;
-        border-radius: 6px;
-        height: 40px;
-        line-height: 40px;
-
-        &.ant-menu-item-selected {
-          background-color: var(--main-10);
-          color: var(--main-color);
-          font-weight: 500;
-
-          &::after {
-            display: none;
-          }
-        }
-
-        &:hover {
-          background-color: var(--gray-50);
-        }
-      }
-
-      :deep(.ant-menu-item-icon) {
-        font-size: 16px;
-      }
-    }
-
-    .sidebar-graph-container {
-      flex: 1;
-      height: 100%;
-      overflow: hidden;
-      display: flex;
-      flex-direction: column;
-    }
-
-    .graph-view {
-      display: flex;
-      flex-direction: column;
-      overflow: hidden;
-    }
+    padding-left: 0;
   }
 
-  .resize-handle-left {
-    position: relative;
+  .resize-handle {
     width: 4px;
-    height: 100%;
     cursor: col-resize;
-    background-color: transparent;
-    z-index: 2;
-    transition: background-color 0.2s ease;
-    pointer-events: auto;
+    background-color: var(--gray-200);
+    position: relative;
+    z-index: 10;
     flex-shrink: 0;
-
-    &:hover {
-      background-color: var(--main-40);
-    }
+    height: 30px;
+    top: 40%;
+    margin: 0 2px;
+    border-radius: 4px;
   }
+}
 
-  .main-content {
+/* Tab 样式 */
+.knowledge-tabs {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--gray-200);
+  border-radius: 12px;
+  background: var(--gray-10);
+  overflow: hidden;
+
+  :deep(.ant-tabs-content) {
     flex: 1;
     height: 100%;
     overflow: hidden;
-    transition: width 0.2s ease;
-    position: relative;
-    z-index: 0;
-    min-width: 0;
+  }
+
+  :deep(.ant-tabs-tabpane) {
+    height: 100%;
+    overflow: hidden;
+  }
+
+  :deep(.ant-tabs-nav) {
+    margin-bottom: 0;
+    // background-color: var(--gray-0);
+  }
+
+  :deep(.ant-tabs-extra-content) {
     display: flex;
-    flex-direction: column;
-
-    .codehub-tabs {
-      flex-shrink: 0;
-      background: white;
-      border-bottom: 1px solid var(--gray-200);
-      padding: 0 16px;
-
-      :deep(.ant-menu) {
-        border-bottom: none;
-      }
-    }
-
-    .content-view {
-      flex: 1;
-      height: 0;
-      width: 100%;
-      overflow: hidden;
-
-      &.query-view {
-        display: flex;
-        flex-direction: column;
-      }
-    }
+    align-items: center;
+    height: 100%;
   }
 }
 
-
-/* Improve the resize handle visibility */
-.resize-handle,
-.resize-handle-horizontal {
-  transition: all 0.2s ease;
-  opacity: 0.6;
+.config-btn {
+  color: var(--gray-600);
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 4px 8px;
+  height: 32px;
+  border-radius: 6px;
+  transition: all 0.2s;
 
   &:hover {
-    opacity: 1;
-    background-color: var(--main-color);
+    color: var(--main-color);
+    background-color: var(--gray-100);
   }
-}
 
-/* Responsive design for smaller screens */
-@media (max-width: 768px) {
-  .unified-layout {
-    .sidebar {
-      width: 180px !important;
-    }
-
-    .main-content {
-      width: calc(100% - 180px - 4px) !important;
-    }
+  .config-text {
+    font-size: 14px;
+    margin-left: 4px;
   }
 }
 
@@ -469,47 +697,6 @@ onUnmounted(() => {
 </style>
 
 <style lang="less">
-:deep(.full-modal) {
-  .ant-modal {
-    max-width: 100%;
-    top: 0;
-    padding-bottom: 0;
-    margin: 0;
-    padding: 0;
-  }
-
-  .ant-modal-content {
-    display: flex;
-    flex-direction: column;
-    height: calc(100vh - 200px);
-  }
-
-  .ant-modal-body {
-    flex: 1;
-  }
-}
-
-
-
-.maximized-graph-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-
-  h3 {
-    margin: 0;
-    color: var(--gray-800);
-  }
-}
-
-
-.maximized-graph-content {
-  height: calc(100vh - 300px);
-  border-radius: 6px;
-  overflow: hidden;
-}
-
-
 /* 全局样式作为备用方案 */
 .ant-popover .query-params-compact {
   width: 220px;
@@ -541,7 +728,6 @@ onUnmounted(() => {
   margin-right: 8px;
 }
 
-
 /* Improve panel transitions */
 .panel-section {
   display: flex;
@@ -560,8 +746,8 @@ onUnmounted(() => {
     justify-content: space-between;
     align-items: center;
     padding: 8px 12px;
-    border-bottom: 1px solid #f0f0f0;
-    background-color: #fafafa;
+    border-bottom: 1px solid var(--gray-150);
+    background-color: var(--gray-25);
 
     .header-left {
       display: flex;
@@ -597,5 +783,20 @@ onUnmounted(() => {
     flex: 1;
     overflow: hidden;
   }
+}
+
+// 基准管理样式
+.benchmark-management-container {
+  height: 100%;
+  background: var(--gray-0);
+  display: flex;
+  flex-direction: column;
+}
+
+.benchmark-content {
+  flex: 1;
+  overflow: hidden;
+  min-height: 0;
+  padding: 12px 16px;
 }
 </style>

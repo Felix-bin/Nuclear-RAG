@@ -1,27 +1,28 @@
 <script setup>
-import { ref, reactive, onMounted, useTemplateRef, computed } from 'vue'
+import { ref, reactive, onMounted, computed, provide } from 'vue'
 import { RouterLink, RouterView, useRoute } from 'vue-router'
-import {
-  GithubOutlined,
-  ExclamationCircleOutlined,
-} from '@ant-design/icons-vue'
-import { Bot, Waypoints, LibraryBig, Settings, BarChart3, ChevronLeft, ChevronRight, FolderGit2 } from 'lucide-vue-next';
-import { onLongPress } from '@vueuse/core'
+import { GithubOutlined } from '@ant-design/icons-vue'
+import { Bot, Waypoints, LibraryBig, BarChart3, CircleCheck } from 'lucide-vue-next'
 
 import { useConfigStore } from '@/stores/config'
 import { useDatabaseStore } from '@/stores/database'
 import { useInfoStore } from '@/stores/info'
+import { useTaskerStore } from '@/stores/tasker'
+import { storeToRefs } from 'pinia'
 import UserInfoComponent from '@/components/UserInfoComponent.vue'
 import DebugComponent from '@/components/DebugComponent.vue'
+import TaskCenterDrawer from '@/components/TaskCenterDrawer.vue'
+import SettingsModal from '@/components/SettingsModal.vue'
 
 const configStore = useConfigStore()
 const databaseStore = useDatabaseStore()
 const infoStore = useInfoStore()
+const taskerStore = useTaskerStore()
+const { activeCount: activeCountRef, isDrawerOpen } = storeToRefs(taskerStore)
 
 const layoutSettings = reactive({
   showDebug: false,
-  useTopBar: false, // 是否使用顶栏
-  sidebarExpanded: localStorage.getItem('sidebarExpanded') === 'true' || false, // 侧边栏是否展开
+  useTopBar: false // 是否使用顶栏
 })
 
 // Add state for GitHub stars
@@ -30,22 +31,14 @@ const isLoadingStars = ref(false)
 
 // Add state for debug modal
 const showDebugModal = ref(false)
-const htmlRefHook = useTemplateRef('htmlRefHook')
 
-// Setup long press for debug modal
-onLongPress(
-  htmlRefHook,
-  () => {
-    console.log('long press')
-    showDebugModal.value = true
-  },
-  {
-    delay: 1000, // 1秒长按
-    modifiers: {
-      prevent: true
-    }
-  }
-)
+// Add state for settings modal
+const showSettingsModal = ref(false)
+
+// Provide settings modal methods to child components
+const openSettingsModal = () => {
+  showSettingsModal.value = true
+}
 
 // Handle debug modal close
 const handleDebugModalClose = () => {
@@ -57,9 +50,23 @@ const getRemoteConfig = () => {
 }
 
 const getRemoteDatabase = () => {
-  databaseStore.getDatabaseInfo()
+  databaseStore.loadDatabases()
 }
 
+// Fetch GitHub stars count
+const fetchGithubStars = async () => {
+  try {
+    isLoadingStars.value = true
+    // 公共API，可以直接使用fetch
+    const response = await fetch('https://api.github.com/repos/xerrors/Yuxi-Know')
+    const data = await response.json()
+    githubStars.value = data.stargazers_count
+  } catch (error) {
+    console.error('获取GitHub stars失败:', error)
+  } finally {
+    isLoadingStars.value = false
+  }
+}
 
 onMounted(async () => {
   // 加载信息配置
@@ -68,50 +75,56 @@ onMounted(async () => {
   getRemoteConfig()
   getRemoteDatabase()
   fetchGithubStars() // Fetch GitHub stars on mount
+  // 预加载任务数据，确保任务中心打开时有内容
+  taskerStore.loadTasks()
 })
 
 // 打印当前页面的路由信息，使用 vue3 的 setup composition API
 const route = useRoute()
 console.log(route)
 
-// 切换侧边栏展开/收缩
-const toggleSidebar = () => {
-  layoutSettings.sidebarExpanded = !layoutSettings.sidebarExpanded
-  localStorage.setItem('sidebarExpanded', layoutSettings.sidebarExpanded)
-}
+const activeTaskCount = computed(() => activeCountRef.value || 0)
 
 // 下面是导航菜单部分，添加智能体项
-const mainList = [{
+const mainList = [
+  {
     name: '智能体',
     path: '/agent',
     icon: Bot,
-    activeIcon: Bot,
-  }, {
+    activeIcon: Bot
+  },
+  {
+    name: '图谱',
+    path: '/graph',
+    icon: Waypoints,
+    activeIcon: Waypoints
+  },
+  {
     name: '知识库',
     path: '/database',
     icon: LibraryBig,
-    activeIcon: LibraryBig,
-  }, {
-    name: '代码仓库',
-    path: '/codehub',
-    icon: FolderGit2,
-    activeIcon: FolderGit2,
-  }, {
+    activeIcon: LibraryBig
+  },
+  {
     name: 'Dashboard',
     path: '/dashboard',
     icon: BarChart3,
-    activeIcon: BarChart3,
+    activeIcon: BarChart3
   }
 ]
+
+// Provide settings modal methods to child components
+provide('settingsModal', {
+  openSettingsModal
+})
 </script>
 
 <template>
   <div class="app-layout" :class="{ 'use-top-bar': layoutSettings.useTopBar }">
-    <div class="header" :class="{ 'top-bar': layoutSettings.useTopBar, 'expanded': layoutSettings.sidebarExpanded }">
+    <div class="header" :class="{ 'top-bar': layoutSettings.useTopBar }">
       <div class="logo circle">
         <router-link to="/">
-          <img :src="infoStore.organization.avatar">
-          <span v-if="layoutSettings.sidebarExpanded" class="logo-text">StackSolve</span>
+          <img :src="infoStore.organization.avatar" />
         </router-link>
       </div>
       <div class="nav">
@@ -122,61 +135,51 @@ const mainList = [{
           :to="item.path"
           v-show="!item.hidden"
           class="nav-item"
-          active-class="active">
-          <a-tooltip placement="right" :mouseEnterDelay="0.5" :disabled="layoutSettings.sidebarExpanded">
+          active-class="active"
+        >
+          <a-tooltip placement="right">
             <template #title>{{ item.name }}</template>
-            <div class="nav-item-content">
-              <component class="icon" :is="route.path.startsWith(item.path) ? item.activeIcon : item.icon" size="22"/>
-              <span v-if="layoutSettings.sidebarExpanded" class="nav-text">{{ item.name }}</span>
-            </div>
+            <component
+              class="icon"
+              :is="route.path.startsWith(item.path) ? item.activeIcon : item.icon"
+              size="22"
+            />
           </a-tooltip>
         </RouterLink>
+        <div
+          class="nav-item task-center"
+          :class="{ active: isDrawerOpen }"
+          @click="taskerStore.openDrawer()"
+        >
+          <a-tooltip placement="right">
+            <template #title>任务中心</template>
+            <a-badge
+              :count="activeTaskCount"
+              :overflow-count="99"
+              class="task-center-badge"
+              size="small"
+            >
+              <CircleCheck class="icon" size="22" />
+            </a-badge>
+          </a-tooltip>
+        </div>
       </div>
-      <div
-        ref="htmlRefHook"
-        class="fill debug-trigger"
-      ></div>
-
-      <!-- <div class="nav-item api-docs">
+      <div class="fill"></div>
+      <div class="github nav-item">
         <a-tooltip placement="right">
-          <template #title>接口文档 {{ apiDocsUrl }}</template>
-          <a :href="apiDocsUrl" target="_blank" class="github-link">
-            <ApiOutlined class="icon" style="color: #222;"/>
+          <template #title>欢迎 Star</template>
+          <a href="https://github.com/xerrors/Yuxi-Know" target="_blank" class="github-link">
+            <GithubOutlined class="icon" />
+            <span v-if="githubStars > 0" class="github-stars">
+              <span class="star-count">{{ (githubStars / 1000).toFixed(1) }}k</span>
+            </span>
           </a>
         </a-tooltip>
-      </div> -->
-
+      </div>
       <!-- 用户信息组件 -->
       <div class="nav-item user-info">
-        <a-tooltip placement="right" :disabled="layoutSettings.sidebarExpanded">
-          <template #title>用户信息</template>
-          <div class="user-info-content">
-            <UserInfoComponent :showRole="false" />
-            <span v-if="layoutSettings.sidebarExpanded" class="nav-text user-info-text">用户信息</span>
-          </div>
-        </a-tooltip>
+        <UserInfoComponent />
       </div>
-
-      <RouterLink class="nav-item setting" to="/setting" active-class="active">
-        <a-tooltip placement="right" :mouseEnterDelay="0.5" :disabled="layoutSettings.sidebarExpanded">
-          <template #title>设置</template>
-          <div class="nav-item-content">
-            <Settings size="22"/>
-            <span v-if="layoutSettings.sidebarExpanded" class="nav-text">设置</span>
-          </div>
-        </a-tooltip>
-      </RouterLink>
-
-      <!-- 收缩/展开按钮 -->
-      <div class="toggle-sidebar-btn" @click="toggleSidebar">
-        <ChevronLeft v-if="layoutSettings.sidebarExpanded" size="20" />
-        <ChevronRight v-else size="20" />
-      </div>
-    </div>
-    <div class="header-mobile">
-      <RouterLink to="/chat" class="nav-item" active-class="active">对话</RouterLink>
-      <RouterLink to="/database" class="nav-item" active-class="active">知识</RouterLink>
-      <RouterLink to="/setting" class="nav-item" active-class="active">设置</RouterLink>
     </div>
     <router-view v-slot="{ Component, route }" id="app-router-view">
       <keep-alive v-if="route.meta.keepAlive !== false">
@@ -198,13 +201,14 @@ const mainList = [{
     >
       <DebugComponent />
     </a-modal>
+    <TaskCenterDrawer />
+    <SettingsModal v-model:visible="showSettingsModal" @close="() => (showSettingsModal = false)" />
   </div>
 </template>
 
 <style lang="less" scoped>
 // Less 变量定义
-@header-width-collapsed: 50px;
-@header-width-expanded: 200px;
+@header-width: 50px;
 
 .app-layout {
   display: flex;
@@ -212,22 +216,10 @@ const mainList = [{
   width: 100%;
   height: 100vh;
   min-width: var(--min-width);
-
-  .header-mobile {
-    display: none;
-  }
-
-  .debug-panel {
-    position: absolute;
-    z-index: 100;
-    right: 0;
-    bottom: 50px;
-    border-radius: 20px 0 0 20px;
-    cursor: pointer;
-  }
 }
 
-div.header, #app-router-view {
+div.header,
+#app-router-view {
   height: 100%;
   max-width: 100%;
   user-select: none;
@@ -241,24 +233,13 @@ div.header, #app-router-view {
 .header {
   display: flex;
   flex-direction: column;
-  flex: 0 0 @header-width-collapsed;
+  flex: 0 0 @header-width;
   justify-content: flex-start;
   align-items: center;
-  background-color: var(--main-10);
+  background-color: var(--main-0);
   height: 100%;
-  width: @header-width-collapsed;
+  width: @header-width;
   border-right: 1px solid var(--gray-100);
-  transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1), 
-              flex-basis 0.3s cubic-bezier(0.4, 0, 0.2, 1),
-              padding 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  will-change: width;
-
-  &.expanded {
-    flex: 0 0 @header-width-expanded;
-    width: @header-width-expanded;
-    align-items: flex-start;
-    padding: 0 12px;
-  }
 
   .nav {
     display: flex;
@@ -266,86 +247,72 @@ div.header, #app-router-view {
     justify-content: center;
     align-items: center;
     position: relative;
-    width: 100%;
-    gap: 8px;
+    // height: 45px;
+    gap: 16px;
   }
 
-  // 添加debug触发器样式
-  .debug-trigger {
-    position: relative;
-    height: 100%;
-    width: 100%;
-    min-height: 20px;
+  .fill {
     flex-grow: 1;
   }
 
   .logo {
     width: 34px;
     height: 34px;
-    margin: 12px 0 20px 0;
-    transition: width 0.3s ease;
-
-    a {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      text-decoration: none;
-      white-space: nowrap;
-    }
+    margin: 6px 0 20px 0;
 
     img {
-      width: 34px;
-      height: 34px;
-      border-radius: 4px;
-      flex-shrink: 0;
+      width: 100%;
+      height: 100%;
+      border-radius: 4px; // 50% for circle
     }
 
-    .logo-text {
-      font-size: 16px;
-      font-weight: 600;
-      color: var(--text-primary);
-      opacity: 0;
-      animation: fadeIn 0.3s ease 0.15s forwards;
+    & > a {
+      text-decoration: none;
+      font-size: 24px;
+      font-weight: bold;
+      color: var(--gray-900);
     }
-  }
-
-  &.expanded .logo {
-    width: 100%;
   }
 
   .nav-item {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 44px;
-    height: 44px;
-    padding: 10px;
+    width: 36px;
+    height: 36px;
+    padding: 4px;
     border: 1px solid transparent;
-    border-radius: 8px;
+    border-radius: 12px;
     background-color: transparent;
-    color: #222;
+    color: var(--gray-1000);
     font-size: 20px;
-    transition: all 0.2s ease-in-out;
+    transition:
+      background-color 0.2s ease-in-out,
+      color 0.2s ease-in-out;
     margin: 0;
     text-decoration: none;
     cursor: pointer;
-    position: relative;
-    white-space: nowrap;
+    outline: none;
 
-    .nav-item-content {
-      display: flex;
-      align-items: center;
-      gap: 0;
-      width: 100%;
+    & > svg:focus {
+      outline: none;
+    }
+    & > svg:focus-visible {
+      outline: none;
     }
 
-    .nav-text {
-      margin-left: 12px;
-      font-size: 15px;
-      font-weight: 500;
-      line-height: 22px;
-      opacity: 0;
-      animation: fadeIn 0.3s ease 0.15s forwards;
+    &.active {
+      background-color: var(--gray-100);
+      font-weight: bold;
+      color: var(--main-color);
+    }
+
+    &.warning {
+      color: var(--color-error-500);
+    }
+
+    &:hover {
+      color: var(--main-color);
     }
 
     &.github {
@@ -370,7 +337,7 @@ div.header, #app-router-view {
         margin-top: 4px;
 
         .star-icon {
-          color: #f0a742;
+          color: var(--color-warning-500);
           font-size: 12px;
           margin-right: 2px;
         }
@@ -384,166 +351,36 @@ div.header, #app-router-view {
     &.api-docs {
       padding: 10px 12px;
     }
-    &.active {
-      text-shadow: 0 0 15px var(--main-300);
-      font-weight: bold;
-      color: var(--main-color);
-    }
-
-    &.warning {
-      color: red;
-    }
-
-    &:hover {
-      color: var(--main-color);
-    }
-  }
-
-  .setting {
-    width: auto;
-    font-size: 20px;
-    color: #333;
-    margin-bottom: 8px;
-    padding: 16px 12px;
-
-    &:hover {
-      cursor: pointer;
-    }
-  }
-
-  .toggle-sidebar-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 44px;
-    height: 44px;
-    border-radius: 8px;
-    background-color: transparent;
-    color: var(--gray-700);
-    cursor: pointer;
-    transition: all 0.2s ease;
-    margin-bottom: 12px;
-    flex-shrink: 0;
-
-    &:hover {
-      background-color: var(--gray-100);
-      color: var(--main-color);
-    }
-  }
-
-  &.expanded {
-    .nav-item {
-      width: 100%;
-      justify-content: flex-start;
-      padding: 10px 12px;
-
-      &.user-info {
-        display: flex;
-        align-items: center;
-        gap: 0;
-        
-        .user-info-content {
-          display: flex;
-          align-items: center;
-          gap: 0;
-          width: 100%;
-        }
-
-        :deep(.user-info-component) {
-          display: flex;
-          align-items: center;
-        }
-
-        :deep(.user-info-dropdown) {
-          display: flex;
-          align-items: center;
-          justify-content: flex-start;
-        }
-
-        :deep(.user-avatar) {
-          width: 22px !important;
-          height: 22px !important;
-          
-          .avatar-image {
-            width: 22px !important;
-            height: 22px !important;
-          }
-
-          svg {
-            width: 22px;
-            height: 22px;
-          }
-        }
-
-        .user-info-text {
-          margin-left: 12px;
-        }
-      }
-    }
-
-    .setting {
-      width: 100%;
-      justify-content: flex-start;
-      padding: 10px 12px;
-      margin-bottom: 0;
-    }
-
-    .toggle-sidebar-btn {
-      width: 100%;
-    }
-  }
-}
-
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
-
-@media (max-width: 520px) {
-  .app-layout {
-    flex-direction: column-reverse;
-
-    div.header {
+    &.docs {
       display: none;
     }
-
-    .debug-panel {
-      bottom: 10rem;
-    }
-
-  }
-  .app-layout div.header-mobile {
-    display: flex;
-    flex-direction: row;
-    width: 100%;
-    padding: 0 20px;
-    justify-content: space-around;
-    align-items: center;
-    flex: 0 0 60px;
-    border-right: none;
-    height: 40px;
-
-    .nav-item {
-      text-decoration: none;
-      width: 40px;
-      color: var(--gray-900);
-      font-size: 1rem;
-      font-weight: bold;
-      transition: color 0.1s ease-in-out, font-size 0.1s ease-in-out;
-
-      &.active {
-        color: black;
-        font-size: 1.1rem;
+    &.task-center {
+      .task-center-badge {
+        width: 100%;
+        display: flex;
+        justify-content: center;
       }
     }
-  }
-  .app-layout .chat-box::webkit-scrollbar {
-    width: 0;
+
+    &.theme-toggle-nav {
+      .theme-toggle-icon {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+        height: 100%;
+        cursor: pointer;
+        color: var(--gray-1000);
+        transition: color 0.2s ease-in-out;
+
+        &:hover {
+          color: var(--main-color);
+        }
+      }
+    }
+    &.user-info {
+      margin-bottom: 8px;
+    }
   }
 }
 
@@ -581,7 +418,6 @@ div.header, #app-router-view {
       height: 28px;
       margin-right: 8px;
     }
-
   }
 
   .nav {
@@ -602,7 +438,8 @@ div.header, #app-router-view {
       border: none;
       outline: none;
 
-      &:focus, &:active {
+      &:focus,
+      &:active {
         border: none;
         outline: none;
       }
@@ -613,7 +450,7 @@ div.header, #app-router-view {
       font-size: 15px;
     }
 
-    &.github, &.setting {
+    &.github {
       padding: 8px 12px;
 
       .icon {
@@ -624,9 +461,7 @@ div.header, #app-router-view {
       &.active {
         color: var(--main-color);
       }
-    }
 
-    &.github {
       a {
         display: flex;
         align-items: center;
@@ -638,9 +473,32 @@ div.header, #app-router-view {
         margin-left: 6px;
 
         .star-icon {
-          color: #f0a742;
+          color: var(--color-warning-500);
           font-size: 14px;
           margin-right: 2px;
+        }
+      }
+    }
+
+    &.theme-toggle-nav {
+      padding: 8px 12px;
+
+      .theme-toggle-icon {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--gray-1000);
+        transition: color 0.2s ease-in-out;
+        cursor: pointer;
+
+        &:hover {
+          color: var(--main-color);
+        }
+      }
+
+      &.active {
+        .theme-toggle-icon {
+          color: var(--main-color);
         }
       }
     }

@@ -1,17 +1,18 @@
 """Define the configurable parameters for the agent."""
 
-from __future__ import annotations
-
 import os
 import uuid
 from dataclasses import MISSING, dataclass, field, fields
 from pathlib import Path
-from typing import get_args, get_origin
+from typing import Annotated, get_args, get_origin
 
 import yaml
 
 from src import config as sys_config
+from src.services.mcp_service import get_mcp_server_names
 from src.utils import logger
+
+from .tools import gen_tool_info, get_buildin_tools
 
 
 @dataclass(kw_only=True)
@@ -33,21 +34,65 @@ class BaseContext:
 
     thread_id: str = field(
         default_factory=lambda: str(uuid.uuid4()),
-        metadata={"name": "线程ID", "configurable": False, "description": "用来描述智能体的角色和行为"},
+        metadata={"name": "线程ID", "configurable": False, "description": "用来唯一标识一个对话线程"},
     )
 
     user_id: str = field(
         default_factory=lambda: str(uuid.uuid4()),
-        metadata={"name": "用户ID", "configurable": False, "description": "用来描述智能体的角色和行为"},
+        metadata={"name": "用户ID", "configurable": False, "description": "用来唯一标识一个用户"},
     )
 
-    system_prompt: str = field(
+    department_id: int | None = field(
+        default=None,
+        metadata={"name": "部门ID", "configurable": False, "description": "用来唯一标识一个部门"},
+    )
+
+    system_prompt: Annotated[str, {"__template_metadata__": {"kind": "prompt"}}] = field(
         default="You are a helpful assistant.",
         metadata={"name": "系统提示词", "description": "用来描述智能体的角色和行为"},
     )
 
+    model: Annotated[str, {"__template_metadata__": {"kind": "llm"}}] = field(
+        default=sys_config.default_model,
+        metadata={
+            "name": "智能体模型",
+            "options": [],
+            "description": "智能体的驱动模型，建议选择 Agent 能力较强的模型，不建议使用小参数模型。",
+        },
+    )
+
+    tools: Annotated[list[dict], {"__template_metadata__": {"kind": "tools"}}] = field(
+        default_factory=list,
+        metadata={
+            "name": "工具",
+            "options": lambda: gen_tool_info(get_buildin_tools()),
+            "description": "内置的工具。",
+        },
+    )
+
+    knowledges: Annotated[list[str], {"__template_metadata__": {"kind": "knowledges"}}] = field(
+        default_factory=list,
+        metadata={
+            "name": "知识库",
+            "description": "知识库列表，可以在左侧知识库页面中创建知识库。",
+            "type": "list",  # Explicitly mark as list type for frontend if needed
+        },
+    )
+
+    mcps: Annotated[list[str], {"__template_metadata__": {"kind": "mcps"}}] = field(
+        default_factory=list,
+        metadata={
+            "name": "MCP服务器",
+            "options": lambda: get_mcp_server_names(),
+            "description": (
+                "MCP服务器列表，建议使用支持 SSE 的 MCP 服务器，"
+                "如果需要使用 uvx 或 npx 运行的服务器，也请在项目外部启动 MCP 服务器，并在项目中配置 MCP 服务器。"
+            ),
+        },
+    )
+
     @classmethod
-    def from_file(cls, module_name: str, input_context: dict = None) -> BaseContext:
+    def from_file(cls, module_name: str, input_context: dict = None) -> "BaseContext":
         """Load configuration from a YAML file. 用于持久化配置"""
 
         # 从文件加载配置
@@ -104,10 +149,14 @@ class BaseContext:
                     # 提取 Annotated 的元数据
                     template_metadata = cls._extract_template_metadata(field_type)
 
+                    options = f.metadata.get("options", [])
+                    if callable(options):
+                        options = options()
+
                     configurable_items[f.name] = {
                         "type": type_name,
                         "name": f.metadata.get("name", f.name),
-                        "options": f.metadata.get("options", []),
+                        "options": options,
                         "default": f.default
                         if f.default is not MISSING
                         else f.default_factory()
