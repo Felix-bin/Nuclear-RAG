@@ -344,15 +344,7 @@ def get_buildin_tools() -> list:
     """注册静态工具"""
     static_tools = [
         query_knowledge_graph,
-        get_approved_user_goal,
-        calculator,
-        text_to_img_demo,
     ]
-
-    # subagents 工具
-    from .subagents import calc_agent_tool
-
-    static_tools.append(calc_agent_tool)
 
     # 检查是否启用网页搜索（即是否配置了 API_KEY）
     if config.enable_web_search:

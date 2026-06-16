@@ -46,19 +46,6 @@ const router = createRouter({
       meta: { requiresAuth: true }
     },
     {
-      path: '/graph',
-      name: 'graph',
-      component: AppLayout,
-      children: [
-        {
-          path: '',
-          name: 'GraphComp',
-          component: () => import('../views/GraphView.vue'),
-          meta: { keepAlive: false, requiresAuth: true, requiresAdmin: true }
-        }
-      ]
-    },
-    {
       path: '/database',
       name: 'database',
       component: AppLayout,

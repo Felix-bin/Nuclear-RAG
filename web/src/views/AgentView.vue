@@ -1,44 +1,6 @@
 <template>
   <div class="agent-view">
     <div class="agent-view-body">
-      <!-- 智能体选择弹窗 -->
-      <a-modal
-        v-model:open="chatUIStore.agentModalOpen"
-        title="选择智能体"
-        :width="800"
-        :footer="null"
-        :maskClosable="true"
-        class="agent-modal"
-      >
-        <div class="agent-modal-content">
-          <div class="agents-grid">
-            <div
-              v-for="agent in agents"
-              :key="agent.id"
-              class="agent-card"
-              :class="{ selected: agent.id === selectedAgentId }"
-              @click="selectAgentFromModal(agent.id)"
-            >
-              <div class="agent-card-header">
-                <div class="agent-card-title">
-                  <span class="agent-card-name">{{ agent.name || 'Unknown' }}</span>
-                </div>
-                <StarFilled v-if="agent.id === defaultAgentId" class="default-icon" />
-                <StarOutlined
-                  v-else
-                  @click.prevent="setAsDefaultAgent(agent.id)"
-                  class="default-icon"
-                />
-              </div>
-
-              <div class="agent-card-description">
-                {{ agent.description || '' }}
-              </div>
-            </div>
-          </div>
-        </div>
-      </a-modal>
-
       <a-modal
         v-model:open="createConfigModalOpen"
         title="新建配置"
@@ -56,7 +18,6 @@
           ref="chatComponentRef"
           :single-mode="false"
           @open-config="toggleConf"
-          @open-agent-modal="openAgentModal"
           @close-config-sidebar="() => (chatUIStore.isConfigSidebarOpen = false)"
         >
           <template #header-right>
@@ -167,13 +128,7 @@
 
 <script setup>
 import { ref, watch } from 'vue'
-import {
-  StarOutlined,
-  StarFilled,
-  MessageOutlined,
-  ShareAltOutlined,
-  EyeOutlined
-} from '@ant-design/icons-vue'
+import { MessageOutlined, ShareAltOutlined, EyeOutlined } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
 import { Settings2, Ellipsis, ChevronDown, Star, Plus, SquarePen } from 'lucide-vue-next'
 import AgentChatComponent from '@/components/AgentChatComponent.vue'
@@ -199,44 +154,11 @@ const chatUIStore = useChatUIStore()
 
 // 从 agentStore 中获取响应式状态
 const {
-  agents,
   selectedAgentId,
-  defaultAgentId,
   agentConfigs,
   selectedAgentConfigId,
   selectedConfigSummary
 } = storeToRefs(agentStore)
-
-// 设置为默认智能体
-const setAsDefaultAgent = async (agentId) => {
-  if (!agentId || !userStore.isAdmin) return
-
-  try {
-    await agentStore.setDefaultAgent(agentId)
-    message.success('已将当前智能体设为默认')
-  } catch (error) {
-    console.error('设置默认智能体错误:', error)
-    message.error(error.message || '设置默认智能体时发生错误')
-  }
-}
-
-// 这些方法现在由agentStore处理，无需在组件中定义
-
-// 选择智能体（使用store方法）
-const selectAgent = async (agentId) => {
-  await agentStore.selectAgent(agentId)
-}
-
-// 打开智能体选择弹窗
-const openAgentModal = () => {
-  chatUIStore.agentModalOpen = true
-}
-
-// 从弹窗中选择智能体
-const selectAgentFromModal = async (agentId) => {
-  await selectAgent(agentId)
-  chatUIStore.agentModalOpen = false
-}
 
 const toggleConf = () => {
   chatUIStore.isConfigSidebarOpen = !chatUIStore.isConfigSidebarOpen

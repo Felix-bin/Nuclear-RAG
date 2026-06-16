@@ -37,23 +37,7 @@ _mcp_tools_stats: dict[str, dict[str, int]] = {}
 MCP_SERVERS: dict[str, dict[str, Any]] = {}
 
 # Default MCP Server configurations (Imported to DB on first run)
-_DEFAULT_MCP_SERVERS = {
-    "sequentialthinking": {
-        "url": "https://remote.mcpservers.org/sequentialthinking/mcp",
-        "transport": "streamable_http",
-        "description": "顺序思考工具，帮助 AI 将复杂问题分解为多个步骤",
-        "icon": "🧠",
-        "tags": ["内置", "AI"],
-    },
-    "mcp-server-chart": {
-        "command": "npx",
-        "args": ["-y", "@antv/mcp-server-chart"],
-        "transport": "stdio",
-        "description": "图表生成工具，支持生成各类图表（柱状图、折线图、饼图等）",
-        "icon": "📊",
-        "tags": ["内置", "图表"],
-    },
-}
+_DEFAULT_MCP_SERVERS = {}
 
 # =============================================================================
 # === Core Logic (Moved from agents/common/mcp.py) ===

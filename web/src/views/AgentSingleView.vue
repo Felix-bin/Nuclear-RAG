@@ -1,51 +1,7 @@
 <template>
   <div class="agent-single-view">
-    <!-- 智能体选择弹窗 -->
-    <a-modal
-      v-model:open="agentModalOpen"
-      title="选择智能体"
-      :width="800"
-      :footer="null"
-      :maskClosable="true"
-      class="agent-modal"
-    >
-      <div class="agent-modal-content">
-        <div class="agents-grid">
-          <div
-            v-for="agent in agents"
-            :key="agent.id"
-            class="agent-card"
-            :class="{ selected: agent.id === agentId }"
-            @click="selectAgentFromModal(agent.id)"
-          >
-            <div class="agent-card-header">
-              <div class="agent-card-title">
-                <span class="agent-card-name">{{ agent.name || 'Unknown' }}</span>
-              </div>
-              <StarFilled v-if="agent.id === defaultAgentId" class="default-icon" />
-              <StarOutlined
-                v-else
-                @click.prevent="setAsDefaultAgent(agent.id)"
-                class="default-icon"
-              />
-            </div>
-
-            <div class="agent-card-description">
-              {{ agent.description || '' }}
-            </div>
-          </div>
-        </div>
-      </div>
-    </a-modal>
-
     <!-- 智能体聊天界面 -->
     <AgentChatComponent ref="chatComponentRef" :agent-id="agentId" :single-mode="true">
-      <template #header-left>
-        <div type="button" class="agent-nav-btn" @click="openAgentModal">
-          <span class="text">{{ currentAgentName || '选择智能体' }}</span>
-          <ChevronDown size="16" class="switch-icon" />
-        </div>
-      </template>
       <template #header-right>
         <div type="button" class="agent-nav-btn" @click="handleShareChat">
           <Share2 size="18" class="nav-btn-icon" />
@@ -60,63 +16,19 @@
 <script setup>
 import { computed, ref, onMounted } from 'vue'
 import { message } from 'ant-design-vue'
-import { useRoute, useRouter } from 'vue-router'
-import { Share2, ChevronDown } from 'lucide-vue-next'
-import { StarFilled, StarOutlined } from '@ant-design/icons-vue'
+import { useRoute } from 'vue-router'
+import { Share2 } from 'lucide-vue-next'
 import AgentChatComponent from '@/components/AgentChatComponent.vue'
 import UserInfoComponent from '@/components/UserInfoComponent.vue'
 import { ChatExporter } from '@/utils/chatExporter'
 import { handleChatError } from '@/utils/errorHandler'
 import { useAgentStore } from '@/stores/agent'
-import { storeToRefs } from 'pinia'
 
 const route = useRoute()
-const router = useRouter()
 const agentStore = useAgentStore()
 
 const agentId = computed(() => route.params.agent_id)
 const chatComponentRef = ref(null)
-
-// 智能体选择弹窗状态
-const agentModalOpen = ref(false)
-
-// 从 store 获取智能体数据
-const { agents, defaultAgentId } = storeToRefs(agentStore)
-
-// 当前智能体名称
-const currentAgentName = computed(() => {
-  if (!agentId.value || !agents.value?.length) return '智能体加载中……'
-  const agent = agents.value.find((a) => a.id === agentId.value)
-  return agent ? agent.name : '未知智能体'
-})
-
-// 打开智能体选择弹窗
-const openAgentModal = () => {
-  agentModalOpen.value = true
-}
-
-// 从弹窗中选择智能体 - 切换路由
-const selectAgentFromModal = (newAgentId) => {
-  if (newAgentId === agentId.value) {
-    // 如果选择的是当前智能体，只需要关闭弹窗
-    agentModalOpen.value = false
-    return
-  }
-
-  // 跳转到新的智能体页面
-  router.push(`/agent/${newAgentId}`)
-  agentModalOpen.value = false
-}
-
-// 设置默认智能体
-const setAsDefaultAgent = async (agentIdToSet) => {
-  try {
-    await agentStore.setDefaultAgent(agentIdToSet)
-    message.success('已设置为默认智能体')
-  } catch (error) {
-    handleChatError(error, 'save')
-  }
-}
 
 const handleShareChat = async () => {
   try {

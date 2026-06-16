@@ -3,51 +3,37 @@
 
 # 组织信息
 organization:
-  name: "江南语析"           # 完整组织名称
-  logo: "/favicon.svg"       # Logo文件路径（放在 web/public 目录下）
-  avatar: "/avatar.jpg"      # 头像文件路径（放在 web/public 目录下）
+  name: "核智问答"           # 完整组织名称
+  logo: "/logo-icon.png"     # Logo文件路径（放在 web/public 目录下）
+  avatar: "/logo-icon.png"   # 头像文件路径（放在 web/public 目录下）
   login_bg: "/login-bg.jpg"  # 登录背景图片路径（放在 web/public 目录下）
 
 # 项目信息
 branding:
-  name: "Yuxi-Know"
-  title: "Yuxi-Know: 更智能的知识库智能体平台"     # 系统标题
-  subtitle: "大模型驱动的知识库智能体平台"          # 副标题
+  name: "核智问答"
+  title: "核智问答 NucleQA：核电厂知识库智能问答系统"     # 系统标题
+  subtitle: "面向核电运行、维修与应急的智能知识服务"          # 副标题
 
 features:
-  - label: "GitHub Stars"
-    value: "4100+"
-    description: "开发者社区的认可与支持"
-    icon: "stars"
-  - label: "已解决 Issues"
-    value: "300+"
-    description: "持续改进和问题解决能力"
-    icon: "issues"
-  - label: "累计 Commits"
-    value: "1300+"
-    description: "活跃的开发迭代和功能更新"
-    icon: "commits"
-  - label: "开源协议"
-    value: "MIT 协议"
-    description: "完全免费，支持商业使用"
+  - label: "知识覆盖"
+    value: "全场景"
+    description: "覆盖核电运行、维修与应急"
+    icon: "resolved"
+  - label: "答案引用"
+    value: "可溯源"
+    description: "回答可追溯到原始文档"
     icon: "license"
+  - label: "智能问答"
+    value: "RAG"
+    description: "融合检索增强与知识图谱"
+    icon: "stars"
+  - label: "稳定服务"
+    value: "7×24"
+    description: "随时响应的核电知识支持"
+    icon: "commits"
 
-actions:
-  - name: "演示视频"
-    icon: "video"
-    url: "https://www.bilibili.com/video/BV1DF14BTETq"
-  - name: "文档中心"
-    icon: "docs"
-    url: "https://xerrors.github.io/Yuxi-Know/"
-  - name: "提交 Issue"
-    icon: "issue"
-    url: "https://github.com/xerrors/Yuxi-Know/issues/new/choose"
-  - name: "开发路线图"
-    icon: "roadmap"
-    url: "https://xerrors.github.io/Yuxi-Know/latest/changelog/roadmap.html"
-
-
+actions: []
 
 # 页脚信息
 footer:
-  copyright: "© 江南语析 2026 v0.5.0"
+  copyright: "© 核智问答 2026 v0.5.0"

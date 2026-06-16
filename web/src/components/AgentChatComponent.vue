@@ -14,7 +14,6 @@
       @delete-chat="deleteChat"
       @rename-chat="renameChat"
       @toggle-sidebar="toggleSidebar"
-      @open-agent-modal="openAgentModal"
       :class="{
         'sidebar-open': chatUIStore.isSidebarOpen,
         'no-transition': localUIState.isInitialRender
@@ -46,14 +45,6 @@
             />
             <MessageCirclePlus v-else class="nav-btn-icon" size="16" />
             <span class="text">新对话</span>
-          </div>
-          <div v-if="!props.singleMode" class="agent-nav-btn" @click="openAgentModal">
-            <LoaderCircle v-if="!currentAgent" class="nav-btn-icon loading-icon" size="18" />
-            <Bot v-else :size="18" class="nav-btn-icon" />
-            <span class="text hide-text">
-              {{ currentAgentName || '选择智能体' }}
-            </span>
-            <ChevronDown size="16" class="switch-icon" />
           </div>
         </div>
         <div class="header__right">
@@ -202,7 +193,7 @@ import AgentInputArea from '@/components/AgentInputArea.vue'
 import AgentMessageComponent from '@/components/AgentMessageComponent.vue'
 import ChatSidebarComponent from '@/components/ChatSidebarComponent.vue'
 import RefsComponent from '@/components/RefsComponent.vue'
-import { PanelLeftOpen, MessageCirclePlus, LoaderCircle, ChevronDown, Bot } from 'lucide-vue-next'
+import { PanelLeftOpen, MessageCirclePlus, LoaderCircle } from 'lucide-vue-next'
 import { handleChatError, handleValidationError } from '@/utils/errorHandler'
 import { ScrollController } from '@/utils/scrollController'
 import { AgentValidator } from '@/utils/agentValidator'
@@ -221,7 +212,7 @@ const props = defineProps({
   agentId: { type: String, default: '' },
   singleMode: { type: Boolean, default: true }
 })
-const emit = defineEmits(['open-config', 'open-agent-modal'])
+defineEmits(['open-config'])
 
 // ==================== STORE MANAGEMENT ====================
 const agentStore = useAgentStore()
@@ -1097,7 +1088,6 @@ defineExpose({
 const toggleSidebar = () => {
   chatUIStore.toggleSidebar()
 }
-const openAgentModal = () => emit('open-agent-modal')
 
 const handleAgentStateRefresh = async (threadId = null) => {
   if (!currentAgentId.value) return
