@@ -254,7 +254,7 @@ async def get_user_activity_stats(
         from src.storage.postgres.models_business import Conversation, User
 
         now = utc_now()
-        # PostgreSQL with asyncpg requires naive datetime for naive DateTime columns
+        # naive DateTime columns require naive datetime values
         naive_now = now.replace(tzinfo=None)
 
         # Conversations may store either the numeric user primary key or the login user_id string.
@@ -328,7 +328,7 @@ async def get_tool_call_stats(
         from src.storage.postgres.models_business import ToolCall
 
         now = utc_now()
-        # PostgreSQL with asyncpg requires naive datetime for naive DateTime columns
+        # naive DateTime columns require naive datetime values
         naive_now = now.replace(tzinfo=None)
 
         # 基础工具调用统计
@@ -765,7 +765,7 @@ async def get_call_timeseries_stats(
             base_local_time = ensure_shanghai(start_time)
 
         # Convert start_time to naive UTC datetime for PostgreSQL query
-        # PostgreSQL with asyncpg and naive DateTime columns requires naive datetime objects
+        # naive DateTime columns require naive datetime objects
         query_start_time = start_time.replace(tzinfo=None)
 
         # 根据类型查询数据
