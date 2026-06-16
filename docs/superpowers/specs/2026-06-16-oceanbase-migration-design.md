@@ -31,7 +31,8 @@
 ### 3.1 连接层
 
 - 驱动：`asyncpg` → `aiomysql`。
-- 连接串：`mysql+aiomysql://root:${OB_PASSWORD:-}@oceanbase:2881/nuclearag`（容器内部网络，端口 2881）。
+- 连接串：`mysql+aiomysql://root%40test:${OB_PASSWORD:-}@oceanbase:2881/nuclearag`（容器内部网络，端口 2881）。
+- **租户**：oceanbase-ce 镜像的 init.d 脚本运行在 **test 租户**（业务租户），`OB_TENANT_PASSWORD` 设的也是 root@test 的密码。因此 `nuclearag` 建在 test 租户，应用须以 **`root@test`** 连接（URL 中 `@` 编码为 `%40`），裸 `root` 连的是 sys 租户、查不到该库。
 - 数据库名：`nuclearag`。
 - 环境变量：`POSTGRES_URL` → `DATABASE_URL`，相关 `POSTGRES_USER/PASSWORD/DB` → `OB_PASSWORD/OB_DATABASE`（见 §4.4）。
 - `create_async_engine` 的 `json_serializer/json_deserializer/pool_pre_ping/pool_recycle` 参数对 MySQL 同样适用，保留不变。
@@ -39,11 +40,11 @@
 ### 3.2 数据库容器（docker-compose.yml 与 docker-compose.prod.yml）
 
 - 用 `oceanbase/oceanbase-ce`（4.x）替换 `postgres:16` 服务，服务名与 `container_name` 改为 `oceanbase`。
-- 端口映射 `2881:2881`。
-- 环境：`MODE=mini`（降低开发资源占用），按镜像约定设置 root 租户口令（`OB_TENANT_PASSWORD`/`OB_PASSWORD`，默认空）。
-- **自动建库 `nuclearag`**：通过 OceanBase 容器启动脚本完成。`oceanbase/oceanbase-ce` 镜像支持把初始化 SQL 放入其 boot 脚本目录（如挂载 `CREATE DATABASE nuclearag;` 的 init SQL），具体挂载点以镜像版本约定为准，实现阶段确认。
-- 数据卷：`./docker/volumes/oceanbase:/root/ob`（按官方镜像路径为准）。
-- healthcheck：OceanBase 启动慢（约 1–2 分钟），用 `mysql`/`obclient` ping 探活，`start_period` 拉长（建议 ≥120s），`retries` 增大。
+- 镜像：`oceanbase/oceanbase-ce:4.3.5-lts`（Docker Hub 已验证存在）。端口映射 `2881:2881`。
+- 环境：`MODE=mini`（降低开发资源占用），`OB_TENANT_PASSWORD=${OB_PASSWORD:-}`（设置 root@test 口令，默认空）。
+- **自动建库 `nuclearag`**：把含 `CREATE DATABASE nuclearag;` 的 SQL 放在挂载目录 `./docker/oceanbase` → 容器 `/root/boot/init.d`（官方约定：bootstrap 后执行该目录下 SQL，运行在 test 租户）。注意挂的是「目录」而非单文件。
+- 数据卷（持久化）：`./docker/volumes/oceanbase/ob:/root/ob` 与 `./docker/volumes/oceanbase/cluster:/root/.obd/cluster`（官方约定的安装目录与集群配置）。
+- healthcheck：OceanBase bootstrap **最长约 5 分钟**，`start_period` 设 300s、`retries` 40；探活用 `obclient -uroot@test -D nuclearag -e 'SELECT 1'`，将就绪条件绑定到「test 租户可连 + nuclearag 已建」。默认空口令；若设了 `OB_PASSWORD`，healthcheck 与连接串需补 `-p`/密码。
 - 同步更新 api 服务的 `depends_on`（`postgres` → `oceanbase`）与 `NO_PROXY` 列表中的服务名引用。
 
 ## 4. 代码改动清单
@@ -104,5 +105,6 @@
 ## 8. 风险与注意
 
 - **OceanBase 启动时延**：bootstrap 较慢，healthcheck 与 `depends_on: service_healthy` 的 `start_period` 必须给足，否则 api 会因依赖未就绪反复重启。
-- **建库与口令**：`nuclearag` 库由 OceanBase 容器启动脚本自动创建（实现阶段确认镜像的 init SQL 挂载机制）。root 默认空口令，如镜像要求设置租户口令则通过 `OB_PASSWORD` 注入并同步到连接串。应用走容器内部网络（服务名 `oceanbase:2881`），宿主机连接信息仅供本地调试参考。
+- **建库与口令**：`nuclearag` 由 init.d（`/root/boot/init.d`）在 bootstrap 后于 **test 租户**自动创建。默认空口令；如需口令通过 `OB_PASSWORD` 注入（会作用于 root@test），并同步到连接串与 healthcheck。应用走容器内部网络（`oceanbase:2881`、`root@test`），宿主机 `obclient -uroot`（sys 租户）仅供本地管理调试。
+- **配置依据**：以上 OceanBase docker 配置（镜像 tag、MODE、init.d 目录、租户、持久化卷、bootstrap 时长）均已对照官方 [oceanbase/docker-images README](https://github.com/oceanbase/docker-images/blob/main/oceanbase-ce/README.md) 与 Docker Hub tags 核对。
 - **资源占用**：OceanBase 即便 mini 模式也比 postgres:16 占用更多内存，开发机需留意。
