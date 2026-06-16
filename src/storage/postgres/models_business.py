@@ -144,11 +144,9 @@ class AgentConfig(Base):
     __table_args__ = (
         UniqueConstraint("department_id", "agent_id", "name", name="uq_agent_configs_department_agent_name"),
         Index(
-            "uq_agent_configs_department_agent_default",
+            "ix_agent_configs_department_agent",
             "department_id",
             "agent_id",
-            unique=True,
-            postgresql_where=is_default.is_(True),
         ),
     )
 
