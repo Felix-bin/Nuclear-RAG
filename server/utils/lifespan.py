@@ -16,7 +16,6 @@ async def lifespan(app: FastAPI):
     try:
         pg_manager.initialize()
         await pg_manager.create_business_tables()
-        await pg_manager.ensure_knowledge_schema()
     except Exception as e:
         logger.error(f"Failed to initialize database during startup: {e}")
 
