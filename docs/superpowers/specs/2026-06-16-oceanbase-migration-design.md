@@ -31,15 +31,17 @@
 ### 3.1 连接层
 
 - 驱动：`asyncpg` → `aiomysql`。
-- 连接串：`mysql+aiomysql://root:<pwd>@oceanbase:2881/yuxi_know`。
-- 环境变量：`POSTGRES_URL` → `DATABASE_URL`，相关 `POSTGRES_USER/PASSWORD/DB` → `OB_*` 或保留通用命名（见 §4.4）。
+- 连接串：`mysql+aiomysql://root:${OB_PASSWORD:-}@oceanbase:2881/nuclearag`（容器内部网络，端口 2881）。
+- 数据库名：`nuclearag`。
+- 环境变量：`POSTGRES_URL` → `DATABASE_URL`，相关 `POSTGRES_USER/PASSWORD/DB` → `OB_PASSWORD/OB_DATABASE`（见 §4.4）。
 - `create_async_engine` 的 `json_serializer/json_deserializer/pool_pre_ping/pool_recycle` 参数对 MySQL 同样适用，保留不变。
 
 ### 3.2 数据库容器（docker-compose.yml 与 docker-compose.prod.yml）
 
 - 用 `oceanbase/oceanbase-ce`（4.x）替换 `postgres:16` 服务，服务名与 `container_name` 改为 `oceanbase`。
 - 端口映射 `2881:2881`。
-- 环境：`MODE=mini`（降低开发资源占用），按镜像约定设置 root 租户口令。
+- 环境：`MODE=mini`（降低开发资源占用），按镜像约定设置 root 租户口令（`OB_TENANT_PASSWORD`/`OB_PASSWORD`，默认空）。
+- **自动建库 `nuclearag`**：通过 OceanBase 容器启动脚本完成。`oceanbase/oceanbase-ce` 镜像支持把初始化 SQL 放入其 boot 脚本目录（如挂载 `CREATE DATABASE nuclearag;` 的 init SQL），具体挂载点以镜像版本约定为准，实现阶段确认。
 - 数据卷：`./docker/volumes/oceanbase:/root/ob`（按官方镜像路径为准）。
 - healthcheck：OceanBase 启动慢（约 1–2 分钟），用 `mysql`/`obclient` ping 探活，`start_period` 拉长（建议 ≥120s），`retries` 增大。
 - 同步更新 api 服务的 `depends_on`（`postgres` → `oceanbase`）与 `NO_PROXY` 列表中的服务名引用。
@@ -69,7 +71,7 @@
 ### 4.4 docker-compose.yml / docker-compose.prod.yml
 
 - 数据库服务块整体替换（见 §3.2）。
-- api 服务环境变量：`POSTGRES_URL=...` → `DATABASE_URL=mysql+aiomysql://root:${OB_PASSWORD:-}@oceanbase:2881/${OB_DATABASE:-yuxi_know}`。
+- api 服务环境变量：`POSTGRES_URL=...` → `DATABASE_URL=mysql+aiomysql://root:${OB_PASSWORD:-}@oceanbase:2881/${OB_DATABASE:-nuclearag}`。
 - `depends_on` 与 `NO_PROXY` 同步更新。
 
 ### 4.5 pyproject.toml / uv.lock
@@ -102,5 +104,5 @@
 ## 8. 风险与注意
 
 - **OceanBase 启动时延**：bootstrap 较慢，healthcheck 与 `depends_on: service_healthy` 的 `start_period` 必须给足，否则 api 会因依赖未就绪反复重启。
-- **root 口令与租户**：连接信息为 `obclient -h127.0.0.1 -P2881 -uroot -p`。需确认容器内 `yuxi_know` 数据库的创建方式（镜像初始化脚本或首次手动 `CREATE DATABASE`）及 root 口令配置，连接串据此填写。
+- **建库与口令**：`nuclearag` 库由 OceanBase 容器启动脚本自动创建（实现阶段确认镜像的 init SQL 挂载机制）。root 默认空口令，如镜像要求设置租户口令则通过 `OB_PASSWORD` 注入并同步到连接串。应用走容器内部网络（服务名 `oceanbase:2881`），宿主机连接信息仅供本地调试参考。
 - **资源占用**：OceanBase 即便 mini 模式也比 postgres:16 占用更多内存，开发机需留意。
