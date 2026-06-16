@@ -28,20 +28,18 @@ dashboard = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
 def _get_time_group_format(column, time_range: str) -> Any:
     """
-    根据数据库类型生成时间分组格式化表达式。
-    PostgreSQL 使用 to_char + INTERVAL，SQLite 使用 datetime + strftime。
+    生成时间分组格式化表达式（OceanBase MySQL 模式）。
+    使用 DATE_FORMAT + INTERVAL；+8 小时将 naive UTC 转为北京时间后再分组。
     """
-    # 检查是否是 PostgreSQL（通过检测 engine 或使用方言）
-    # 这里直接使用 PostgreSQL 语法，因为所有业务数据现在都在 PostgreSQL 上
     if time_range == "14hours":
         # 每小时: YYYY-MM-DD HH:00
-        time_expr = func.to_char(column + text("INTERVAL '8 hours'"), "YYYY-MM-DD HH24:00")
+        time_expr = func.date_format(column + text("INTERVAL 8 HOUR"), "%Y-%m-%d %H:00")
     elif time_range == "14weeks":
-        # 每周: YYYY-WW
-        time_expr = func.to_char(column + text("INTERVAL '8 hours'"), "YYYY-IW")
+        # 每周: ISO 年-周（%x-%v），与 Python isocalendar 对齐
+        time_expr = func.date_format(column + text("INTERVAL 8 HOUR"), "%x-%v")
     else:  # 14days
         # 每天: YYYY-MM-DD
-        time_expr = func.to_char(column + text("INTERVAL '8 hours'"), "YYYY-MM-DD")
+        time_expr = func.date_format(column + text("INTERVAL 8 HOUR"), "%Y-%m-%d")
     return time_expr
 
 
@@ -789,7 +787,7 @@ async def get_call_timeseries_stats(
             query = query_result.all()
         elif type == "agents":
             # 智能体调用统计（基于对话更新时间，按智能体分组）
-            # 为对话创建独立的时间格式化器（使用 PostgreSQL 兼容的 to_char + INTERVAL）
+            # 为对话创建独立的时间格式化器（DATE_FORMAT + INTERVAL）
             conv_group_format = _get_time_group_format(Conversation.updated_at, time_range)
 
             query_result = await db.execute(
@@ -856,7 +854,7 @@ async def get_call_timeseries_stats(
             results = input_results + output_results
         elif type == "tools":
             # 工具调用统计（按工具名称分组）
-            # 为工具调用创建独立的时间格式化器（使用 PostgreSQL 兼容的 to_char + INTERVAL）
+            # 为工具调用创建独立的时间格式化器（DATE_FORMAT + INTERVAL）
             tool_group_format = _get_time_group_format(ToolCall.created_at, time_range)
 
             query_result = await db.execute(
