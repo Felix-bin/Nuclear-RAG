@@ -4,7 +4,6 @@ import json
 import os
 from contextlib import asynccontextmanager
 
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base
 
@@ -27,8 +26,8 @@ for module in [KnowledgeBase, BusinessBase]:
 class PostgresManager(metaclass=SingletonMeta):
     """PostgreSQL 数据库管理器 - 支持知识库和业务数据"""
 
-    # 知识库 PostgreSQL URL 环境变量名
-    KB_DATABASE_URL_ENV = "POSTGRES_URL"
+    # 知识库数据库 URL 环境变量名
+    KB_DATABASE_URL_ENV = "DATABASE_URL"
 
     def __init__(self):
         self.async_engine = None
@@ -44,7 +43,7 @@ class PostgresManager(metaclass=SingletonMeta):
         if not db_url:
             logger.error(
                 f"环境变量 {self.KB_DATABASE_URL_ENV} 未设置，"
-                "请在 docker-compose.yml 或 .env 中配置 PostgreSQL 连接字符串"
+                "请在 docker-compose.yml 或 .env 中配置数据库连接字符串"
             )
             return
 
@@ -98,78 +97,6 @@ class PostgresManager(metaclass=SingletonMeta):
             await conn.run_sync(BusinessBase.metadata.drop_all)
             await conn.run_sync(KnowledgeBase.metadata.drop_all)
         logger.info("PostgreSQL tables dropped")
-
-    async def ensure_knowledge_schema(self):
-        """确保知识库 schema 包含所有必要字段"""
-        self._check_initialized()
-        stmts = [
-            "ALTER TABLE IF EXISTS knowledge_bases ADD COLUMN IF NOT EXISTS embed_info JSONB",
-            "ALTER TABLE IF EXISTS knowledge_bases ADD COLUMN IF NOT EXISTS llm_info JSONB",
-            "ALTER TABLE IF EXISTS knowledge_bases ADD COLUMN IF NOT EXISTS query_params JSONB",
-            "ALTER TABLE IF EXISTS knowledge_bases ADD COLUMN IF NOT EXISTS additional_params JSONB",
-            "ALTER TABLE IF EXISTS knowledge_bases ADD COLUMN IF NOT EXISTS share_config JSONB",
-            "ALTER TABLE IF EXISTS knowledge_bases ADD COLUMN IF NOT EXISTS mindmap JSONB",
-            "ALTER TABLE IF EXISTS knowledge_bases ADD COLUMN IF NOT EXISTS sample_questions JSONB",
-            "ALTER TABLE IF EXISTS knowledge_bases ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ",
-            "ALTER TABLE IF EXISTS knowledge_files ADD COLUMN IF NOT EXISTS parent_id VARCHAR(64)",
-            "ALTER TABLE IF EXISTS knowledge_files ADD COLUMN IF NOT EXISTS original_filename VARCHAR(512)",
-            "ALTER TABLE IF EXISTS knowledge_files ADD COLUMN IF NOT EXISTS file_type VARCHAR(64)",
-            "ALTER TABLE IF EXISTS knowledge_files ADD COLUMN IF NOT EXISTS path VARCHAR(1024)",
-            "ALTER TABLE IF EXISTS knowledge_files ADD COLUMN IF NOT EXISTS minio_url VARCHAR(1024)",
-            "ALTER TABLE IF EXISTS knowledge_files ADD COLUMN IF NOT EXISTS markdown_file VARCHAR(1024)",
-            "ALTER TABLE IF EXISTS knowledge_files ADD COLUMN IF NOT EXISTS status VARCHAR(32)",
-            "ALTER TABLE IF EXISTS knowledge_files ADD COLUMN IF NOT EXISTS content_hash VARCHAR(128)",
-            "ALTER TABLE IF EXISTS knowledge_files ADD COLUMN IF NOT EXISTS file_size BIGINT",
-            "ALTER TABLE IF EXISTS knowledge_files ADD COLUMN IF NOT EXISTS content_type VARCHAR(64)",
-            "ALTER TABLE IF EXISTS knowledge_files ADD COLUMN IF NOT EXISTS processing_params JSONB",
-            "ALTER TABLE IF EXISTS knowledge_files ADD COLUMN IF NOT EXISTS is_folder BOOLEAN",
-            "ALTER TABLE IF EXISTS knowledge_files ADD COLUMN IF NOT EXISTS error_message TEXT",
-            "ALTER TABLE IF EXISTS knowledge_files ADD COLUMN IF NOT EXISTS created_by VARCHAR(64)",
-            "ALTER TABLE IF EXISTS knowledge_files ADD COLUMN IF NOT EXISTS updated_by VARCHAR(64)",
-            "ALTER TABLE IF EXISTS knowledge_files ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ",
-            "ALTER TABLE IF EXISTS evaluation_benchmarks ADD COLUMN IF NOT EXISTS data_file_path VARCHAR(1024)",
-            "ALTER TABLE IF EXISTS evaluation_benchmarks ADD COLUMN IF NOT EXISTS created_by VARCHAR(64)",
-            "ALTER TABLE IF EXISTS evaluation_benchmarks ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ",
-            "ALTER TABLE IF EXISTS evaluation_results ADD COLUMN IF NOT EXISTS metrics JSONB",
-            "ALTER TABLE IF EXISTS evaluation_results ADD COLUMN IF NOT EXISTS overall_score DOUBLE PRECISION",
-            "ALTER TABLE IF EXISTS evaluation_results ADD COLUMN IF NOT EXISTS total_questions INTEGER",
-            "ALTER TABLE IF EXISTS evaluation_results ADD COLUMN IF NOT EXISTS completed_questions INTEGER",
-            "ALTER TABLE IF EXISTS evaluation_results ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ",
-            "ALTER TABLE IF EXISTS evaluation_results ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ",
-            "ALTER TABLE IF EXISTS evaluation_results ADD COLUMN IF NOT EXISTS created_by VARCHAR(64)",
-            "ALTER TABLE IF EXISTS evaluation_result_details ADD COLUMN IF NOT EXISTS gold_chunk_ids JSONB",
-            "ALTER TABLE IF EXISTS evaluation_result_details ADD COLUMN IF NOT EXISTS gold_answer TEXT",
-            "ALTER TABLE IF EXISTS evaluation_result_details ADD COLUMN IF NOT EXISTS generated_answer TEXT",
-            "ALTER TABLE IF EXISTS evaluation_result_details ADD COLUMN IF NOT EXISTS retrieved_chunks JSONB",
-            "ALTER TABLE IF EXISTS evaluation_result_details ADD COLUMN IF NOT EXISTS metrics JSONB",
-            # 扩展 db_id 字段长度以支持最长 75 字符的 ID（kb_private_ + 64字符hash）
-            "ALTER TABLE IF EXISTS knowledge_bases ALTER COLUMN db_id TYPE VARCHAR(80)",
-            "ALTER TABLE IF EXISTS knowledge_files ALTER COLUMN db_id TYPE VARCHAR(80)",
-            "ALTER TABLE IF EXISTS evaluation_benchmarks ALTER COLUMN db_id TYPE VARCHAR(80)",
-            "ALTER TABLE IF EXISTS evaluation_results ALTER COLUMN db_id TYPE VARCHAR(80)",
-            "CREATE INDEX IF NOT EXISTS idx_kb_type ON knowledge_bases(kb_type)",
-            "CREATE INDEX IF NOT EXISTS idx_kb_name ON knowledge_bases(name)",
-            "CREATE INDEX IF NOT EXISTS idx_kf_db_id ON knowledge_files(db_id)",
-            "CREATE INDEX IF NOT EXISTS idx_kf_parent ON knowledge_files(parent_id)",
-            "CREATE INDEX IF NOT EXISTS idx_kf_status ON knowledge_files(status)",
-            "CREATE INDEX IF NOT EXISTS idx_kf_hash ON knowledge_files(content_hash)",
-            "CREATE INDEX IF NOT EXISTS idx_eb_db_id ON evaluation_benchmarks(db_id)",
-            "CREATE INDEX IF NOT EXISTS idx_er_db_id ON evaluation_results(db_id)",
-            "CREATE INDEX IF NOT EXISTS idx_er_status ON evaluation_results(status)",
-            "CREATE INDEX IF NOT EXISTS idx_er_started ON evaluation_results(started_at DESC)",
-            "CREATE INDEX IF NOT EXISTS idx_erd_task ON evaluation_result_details(task_id)",
-        ]
-
-        async with self.async_engine.begin() as conn:
-            for stmt in stmts:
-                await conn.execute(text(stmt))
-
-    @property
-    def is_postgresql(self) -> bool:
-        """检查是否是 PostgreSQL 数据库"""
-        if not self._initialized:
-            return False
-        return self.async_engine.dialect.name == "postgresql"
 
     async def get_async_session(self) -> AsyncSession:
         """获取异步数据库会话"""
