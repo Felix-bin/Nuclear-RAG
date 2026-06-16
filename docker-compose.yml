@@ -181,7 +181,7 @@ services:
     restart: unless-stopped
 
   oceanbase:
-    image: oceanbase/oceanbase-ce:4.3.5-lts
+    image: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/oceanbase/oceanbase-ce:4.3.5.0-100000202024123117
     container_name: oceanbase
     ports:
       - "2881:2881"
