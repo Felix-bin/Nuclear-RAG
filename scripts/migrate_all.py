@@ -49,7 +49,7 @@ from sqlalchemy import Column, DateTime, Integer, String, Text, create_engine, s
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 from src import config
-from src.storage.postgres.manager import pg_manager
+from src.storage.postgres.manager import ob_manager
 from src.storage.postgres.models_business import (
     Department,
     User,
@@ -387,7 +387,7 @@ class MigrationRunner:
                 self.log(f"[DRY-RUN] 将创建部门: {d.name}")
             return result
 
-        async with pg_manager.get_async_session_context() as session:
+        async with ob_manager.get_async_session_context() as session:
             for sqlite_dept in sqlite_depts:
                 existing = await session.execute(select(Department).where(Department.id == sqlite_dept.id))
                 if existing.scalar_one_or_none():
@@ -415,7 +415,7 @@ class MigrationRunner:
                 self.log(f"[DRY-RUN] 将创建用户: {u.username} ({u.user_id})")
             return result
 
-        async with pg_manager.get_async_session_context() as session:
+        async with ob_manager.get_async_session_context() as session:
             for sqlite_user in sqlite_users:
                 existing = await session.execute(select(User).where(User.id == sqlite_user.id))
                 if existing.scalar_one_or_none():
@@ -454,7 +454,7 @@ class MigrationRunner:
                 self.log(f"[DRY-RUN] 将创建对话: {c.thread_id}")
             return result
 
-        async with pg_manager.get_async_session_context() as session:
+        async with ob_manager.get_async_session_context() as session:
             for sqlite_conv in sqlite_convs:
                 existing = await session.execute(select(Conversation).where(Conversation.id == sqlite_conv.id))
                 if existing.scalar_one_or_none():
@@ -489,7 +489,7 @@ class MigrationRunner:
             self.log(f"[DRY-RUN] 将创建 {len(sqlite_msgs)} 条消息")
             return result
 
-        async with pg_manager.get_async_session_context() as session:
+        async with ob_manager.get_async_session_context() as session:
             for sqlite_msg in sqlite_msgs:
                 existing = await session.execute(select(Message).where(Message.id == sqlite_msg.id))
                 if existing.scalar_one_or_none():
@@ -521,7 +521,7 @@ class MigrationRunner:
             self.log(f"[DRY-RUN] 将创建 {len(sqlite_calls)} 个工具调用")
             return result
 
-        async with pg_manager.get_async_session_context() as session:
+        async with ob_manager.get_async_session_context() as session:
             for sqlite_call in sqlite_calls:
                 existing = await session.execute(select(ToolCall).where(ToolCall.id == sqlite_call.id))
                 if existing.scalar_one_or_none():
@@ -553,7 +553,7 @@ class MigrationRunner:
             self.log(f"[DRY-RUN] 将创建 {len(sqlite_stats)} 条对话统计")
             return result
 
-        async with pg_manager.get_async_session_context() as session:
+        async with ob_manager.get_async_session_context() as session:
             for sqlite_stat in sqlite_stats:
                 existing = await session.execute(
                     select(ConversationStats).where(ConversationStats.id == sqlite_stat.id)
@@ -586,7 +586,7 @@ class MigrationRunner:
             self.log(f"[DRY-RUN] 将创建 {len(sqlite_logs)} 条操作日志")
             return result
 
-        async with pg_manager.get_async_session_context() as session:
+        async with ob_manager.get_async_session_context() as session:
             for sqlite_log in sqlite_logs:
                 existing = await session.execute(select(OperationLog).where(OperationLog.id == sqlite_log.id))
                 if existing.scalar_one_or_none():
@@ -615,7 +615,7 @@ class MigrationRunner:
             self.log(f"[DRY-RUN] 将创建 {len(sqlite_fbs)} 条消息反馈")
             return result
 
-        async with pg_manager.get_async_session_context() as session:
+        async with ob_manager.get_async_session_context() as session:
             for sqlite_fb in sqlite_fbs:
                 existing = await session.execute(select(MessageFeedback).where(MessageFeedback.id == sqlite_fb.id))
                 if existing.scalar_one_or_none():
@@ -645,7 +645,7 @@ class MigrationRunner:
                 self.log(f"[DRY-RUN] 将创建 MCP 服务器: {s.name}")
             return result
 
-        async with pg_manager.get_async_session_context() as session:
+        async with ob_manager.get_async_session_context() as session:
             for sqlite_server in sqlite_servers:
                 existing = await session.execute(select(MCPServer).where(MCPServer.name == sqlite_server.name))
                 if existing.scalar_one_or_none():
@@ -1031,7 +1031,7 @@ class MigrationRunner:
         ]
 
         for model in tables:
-            async with pg_manager.get_async_session_context() as session:
+            async with ob_manager.get_async_session_context() as session:
                 result = await session.execute(select(model))
                 records = result.scalars().all()
                 for record in records:
@@ -1063,7 +1063,7 @@ class MigrationRunner:
             ("evaluation_result_details", "id"),
         ]
 
-        async with pg_manager.get_async_session_context() as session:
+        async with ob_manager.get_async_session_context() as session:
             for table_name, pk_column in tables_with_sequences:
                 if pk_column is None:
                     continue  # 非自增主键，跳过
@@ -1160,7 +1160,7 @@ class MigrationRunner:
             else:
                 pg_model, pk_column = pg_model_info, "id"
 
-            async with pg_manager.get_async_session_context() as session:
+            async with ob_manager.get_async_session_context() as session:
                 from sqlalchemy import func
 
                 result = await session.execute(select(func.count(getattr(pg_model, pk_column))))
@@ -1366,8 +1366,8 @@ async def main() -> None:
         args.dry_run = True
 
     # 初始化 PostgreSQL
-    pg_manager.initialize()
-    await pg_manager.create_tables()
+    ob_manager.initialize()
+    await ob_manager.create_tables()
 
     runner = MigrationRunner(dry_run=args.dry_run)
 

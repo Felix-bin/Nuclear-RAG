@@ -1,4 +1,4 @@
-"""PostgreSQL 数据库管理器 - 支持知识库和业务数据"""
+"""OceanBase 数据库管理器 - 支持知识库和业务数据"""
 
 import json
 import os
@@ -23,8 +23,8 @@ for module in [KnowledgeBase, BusinessBase]:
             setattr(CombinedBase, table_name, table)
 
 
-class PostgresManager(metaclass=SingletonMeta):
-    """PostgreSQL 数据库管理器 - 支持知识库和业务数据"""
+class OceanBaseManager(metaclass=SingletonMeta):
+    """OceanBase 数据库管理器 - 支持知识库和业务数据"""
 
     # 知识库数据库 URL 环境变量名
     KB_DATABASE_URL_ENV = "DATABASE_URL"
@@ -65,15 +65,15 @@ class PostgresManager(metaclass=SingletonMeta):
             )
 
             self._initialized = True
-            logger.info(f"PostgreSQL manager initialized for knowledge base: {db_url.split('@')[0]}://***")
+            logger.info(f"OceanBase manager initialized for knowledge base: {db_url.split('@')[0]}://***")
         except Exception as e:
-            logger.error(f"Failed to initialize PostgreSQL manager: {e}")
+            logger.error(f"Failed to initialize OceanBase manager: {e}")
             # 不抛出异常，允许应用启动，但在使用时会报错
 
     def _check_initialized(self):
         """检查是否已初始化"""
         if not self._initialized:
-            raise RuntimeError("PostgreSQL manager not initialized. Please check configuration.")
+            raise RuntimeError("OceanBase manager not initialized. Please check configuration.")
 
     async def create_tables(self):
         """创建所有表（知识库和业务表）"""
@@ -81,14 +81,14 @@ class PostgresManager(metaclass=SingletonMeta):
         async with self.async_engine.begin() as conn:
             await conn.run_sync(KnowledgeBase.metadata.create_all)
             await conn.run_sync(BusinessBase.metadata.create_all)
-        logger.info("PostgreSQL tables created/checked (knowledge + business)")
+        logger.info("OceanBase tables created/checked (knowledge + business)")
 
     async def create_business_tables(self):
         """创建所有业务数据表"""
         self._check_initialized()
         async with self.async_engine.begin() as conn:
             await conn.run_sync(BusinessBase.metadata.create_all)
-        logger.info("PostgreSQL business tables created/checked")
+        logger.info("OceanBase business tables created/checked")
 
     async def drop_tables(self):
         """删除所有表（慎用！）"""
@@ -96,7 +96,7 @@ class PostgresManager(metaclass=SingletonMeta):
         async with self.async_engine.begin() as conn:
             await conn.run_sync(BusinessBase.metadata.drop_all)
             await conn.run_sync(KnowledgeBase.metadata.drop_all)
-        logger.info("PostgreSQL tables dropped")
+        logger.info("OceanBase tables dropped")
 
     async def get_async_session(self) -> AsyncSession:
         """获取异步数据库会话"""
@@ -113,7 +113,7 @@ class PostgresManager(metaclass=SingletonMeta):
             await session.commit()
         except Exception as e:
             await session.rollback()
-            logger.error(f"PostgreSQL async operation failed: {e}")
+            logger.error(f"OceanBase async operation failed: {e}")
             raise
         finally:
             await session.close()
@@ -154,5 +154,5 @@ class PostgresManager(metaclass=SingletonMeta):
             pass  # commit is automatic in context manager
 
 
-# 创建全局 PostgreSQL 管理器实例
-pg_manager = PostgresManager()
+# 创建全局 OceanBase 管理器实例
+ob_manager = OceanBaseManager()

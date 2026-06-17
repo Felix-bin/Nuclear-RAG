@@ -1,4 +1,4 @@
-"""PostgreSQL 业务数据模型 - 用户、部门、对话等相关表"""
+"""OceanBase 业务数据模型 - 用户、部门、对话等相关表"""
 
 from typing import Any
 

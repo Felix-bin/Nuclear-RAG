@@ -14,7 +14,7 @@ from src.agents import agent_manager
 from src.plugins.guard import content_guard
 from src.repositories.agent_config_repository import AgentConfigRepository
 from src.repositories.conversation_repository import ConversationRepository
-from src.storage.postgres.manager import pg_manager
+from src.storage.postgres.manager import ob_manager
 from src.utils.logging_config import logger
 
 
@@ -451,7 +451,7 @@ async def stream_agent_chat(
             if not full_msg and accumulated_content:
                 full_msg = AIMessage(content="".join(accumulated_content))
 
-            async with pg_manager.get_async_session_context() as new_db:
+            async with ob_manager.get_async_session_context() as new_db:
                 new_conv_repo = ConversationRepository(new_db)
                 await save_partial_message(
                     new_conv_repo,
@@ -480,7 +480,7 @@ async def stream_agent_chat(
         if not full_msg and accumulated_content:
             full_msg = AIMessage(content="".join(accumulated_content))
 
-        async with pg_manager.get_async_session_context() as new_db:
+        async with ob_manager.get_async_session_context() as new_db:
             new_conv_repo = ConversationRepository(new_db)
             await save_partial_message(
                 new_conv_repo,
@@ -605,7 +605,7 @@ async def stream_agent_resume(
     except (asyncio.CancelledError, ConnectionError) as e:
         logger.warning(f"Client disconnected during resume: {e}")
 
-        async with pg_manager.get_async_session_context() as new_db:
+        async with ob_manager.get_async_session_context() as new_db:
             new_conv_repo = ConversationRepository(new_db)
             await save_partial_message(
                 new_conv_repo, thread_id, error_message="对话恢复已中断", error_type="resume_interrupted"
@@ -616,7 +616,7 @@ async def stream_agent_resume(
     except Exception as e:
         logger.error(f"Error during resume: {e}, {traceback.format_exc()}")
 
-        async with pg_manager.get_async_session_context() as new_db:
+        async with ob_manager.get_async_session_context() as new_db:
             new_conv_repo = ConversationRepository(new_db)
             await save_partial_message(
                 new_conv_repo, thread_id, error_message=f"Error during resume: {e}", error_type="resume_error"

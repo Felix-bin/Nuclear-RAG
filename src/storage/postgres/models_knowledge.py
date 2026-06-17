@@ -1,4 +1,4 @@
-"""PostgreSQL 知识库模型 - KnowledgeBase、KnowledgeFile、评估相关表"""
+"""OceanBase 知识库模型 - KnowledgeBase、KnowledgeFile、评估相关表"""
 
 from sqlalchemy import (
     JSON,

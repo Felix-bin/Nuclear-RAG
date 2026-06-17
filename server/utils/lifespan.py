@@ -4,7 +4,7 @@ from fastapi import FastAPI
 
 from src.services.task_service import tasker
 from src.services.mcp_service import init_mcp_servers
-from src.storage.postgres.manager import pg_manager
+from src.storage.postgres.manager import ob_manager
 from src.knowledge import knowledge_base
 from src.utils import logger
 
@@ -14,8 +14,8 @@ async def lifespan(app: FastAPI):
     """FastAPI lifespan事件管理器"""
     # 初始化数据库连接
     try:
-        pg_manager.initialize()
-        await pg_manager.create_business_tables()
+        ob_manager.initialize()
+        await ob_manager.create_business_tables()
     except Exception as e:
         logger.error(f"Failed to initialize database during startup: {e}")
 
@@ -34,4 +34,4 @@ async def lifespan(app: FastAPI):
     await tasker.start()
     yield
     await tasker.shutdown()
-    await pg_manager.close()
+    await ob_manager.close()

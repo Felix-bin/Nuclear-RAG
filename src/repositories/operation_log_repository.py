@@ -4,7 +4,7 @@ from typing import Any
 
 from sqlalchemy import select
 
-from src.storage.postgres.manager import pg_manager
+from src.storage.postgres.manager import ob_manager
 from src.storage.postgres.models_business import OperationLog
 
 
@@ -13,13 +13,13 @@ class OperationLogRepository:
 
     async def get_by_id(self, id: int) -> OperationLog | None:
         """根据 ID 获取操作日志"""
-        async with pg_manager.get_async_session_context() as session:
+        async with ob_manager.get_async_session_context() as session:
             result = await session.execute(select(OperationLog).where(OperationLog.id == id))
             return result.scalar_one_or_none()
 
     async def list_by_user(self, user_id: int, skip: int = 0, limit: int = 100) -> list[OperationLog]:
         """获取用户的操作日志列表"""
-        async with pg_manager.get_async_session_context() as session:
+        async with ob_manager.get_async_session_context() as session:
             result = await session.execute(
                 select(OperationLog)
                 .where(OperationLog.user_id == user_id)
@@ -31,7 +31,7 @@ class OperationLogRepository:
 
     async def create(self, data: dict[str, Any]) -> OperationLog:
         """创建操作日志"""
-        async with pg_manager.get_async_session_context() as session:
+        async with ob_manager.get_async_session_context() as session:
             log = OperationLog(**data)
             session.add(log)
         return log
@@ -40,6 +40,6 @@ class OperationLogRepository:
         """统计用户操作日志数量"""
         from sqlalchemy import func
 
-        async with pg_manager.get_async_session_context() as session:
+        async with ob_manager.get_async_session_context() as session:
             result = await session.execute(select(func.count(OperationLog.id)).where(OperationLog.user_id == user_id))
             return result.scalar() or 0

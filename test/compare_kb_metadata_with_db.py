@@ -12,7 +12,7 @@ os.environ.setdefault("YUXI_SKIP_APP_INIT", "1")
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from src.config import config
-from src.storage.postgres.manager import pg_manager
+from src.storage.postgres.manager import ob_manager
 from src.storage.postgres.models_knowledge import (
     EvaluationBenchmark,
     EvaluationResult,
@@ -102,7 +102,7 @@ def load_json_state() -> JsonState:
 
 
 async def load_db_state() -> DbState:
-    async with pg_manager.get_async_session_context() as session:
+    async with ob_manager.get_async_session_context() as session:
         kb_ids = set((await session.execute(select(KnowledgeBase.db_id))).scalars().all())
         file_ids = set((await session.execute(select(KnowledgeFile.file_id))).scalars().all())
         benchmark_ids = set((await session.execute(select(EvaluationBenchmark.benchmark_id))).scalars().all())
@@ -133,7 +133,7 @@ def _diff(name: str, json_set: set[str], db_set: set[str], limit: int = 30) -> l
 
 
 async def main() -> None:
-    engine_url = pg_manager.async_engine.url.render_as_string(hide_password=True)
+    engine_url = ob_manager.async_engine.url.render_as_string(hide_password=True)
     print(f"db_url={engine_url}")
 
     json_state = load_json_state()

@@ -5,7 +5,7 @@ from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.storage.postgres.manager import pg_manager
+from src.storage.postgres.manager import ob_manager
 from src.storage.postgres.models_business import User
 from server.utils.auth_utils import AuthUtils
 
@@ -25,7 +25,7 @@ PUBLIC_PATHS = [
 
 # 获取数据库会话（异步版本）
 async def get_db():
-    async with pg_manager.get_async_session_context() as db:
+    async with ob_manager.get_async_session_context() as db:
         yield db
 
 

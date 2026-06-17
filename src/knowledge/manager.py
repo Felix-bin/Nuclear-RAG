@@ -257,11 +257,11 @@ class KnowledgeBaseManager:
     async def database_name_exists(self, database_name: str) -> bool:
         """检查知识库名称是否已存在"""
         from src.repositories.knowledge_base_repository import KnowledgeBaseRepository
-        from src.storage.postgres.manager import pg_manager
+        from src.storage.postgres.manager import ob_manager
 
-        # 确保 pg_manager 已初始化
-        if not pg_manager._initialized:
-            pg_manager.initialize()
+        # 确保 ob_manager 已初始化
+        if not ob_manager._initialized:
+            ob_manager.initialize()
 
         kb_repo = KnowledgeBaseRepository()
         rows = await kb_repo.get_all()

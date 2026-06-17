@@ -34,7 +34,7 @@ from sqlalchemy import Column, DateTime, Integer, String, Text, create_engine, s
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 from src import config
-from src.storage.postgres.manager import pg_manager
+from src.storage.postgres.manager import ob_manager
 from src.storage.postgres.models_business import (
     Department,
     User,
@@ -271,7 +271,7 @@ async def migrate_departments(sqlite_reader: SQLiteReader, dry_run: bool, execut
         for sqlite_dept in sqlite_depts:
             logger.info(f"[DRY-RUN] 将创建部门: {sqlite_dept.name}")
     elif execute:
-        async with pg_manager.get_async_session_context() as session:
+        async with ob_manager.get_async_session_context() as session:
             for sqlite_dept in sqlite_depts:
                 # 检查是否已存在
                 existing = await session.execute(select(Department).where(Department.id == sqlite_dept.id))
@@ -298,7 +298,7 @@ async def migrate_users(sqlite_reader: SQLiteReader, dry_run: bool, execute: boo
         for sqlite_user in sqlite_users:
             logger.info(f"[DRY-RUN] 将创建用户: {sqlite_user.username} ({sqlite_user.user_id})")
     elif execute:
-        async with pg_manager.get_async_session_context() as session:
+        async with ob_manager.get_async_session_context() as session:
             for sqlite_user in sqlite_users:
                 existing = await session.execute(select(User).where(User.id == sqlite_user.id))
                 if existing.scalar_one_or_none() is None:
@@ -335,7 +335,7 @@ async def migrate_conversations(sqlite_reader: SQLiteReader, dry_run: bool, exec
         for sqlite_conv in sqlite_convs:
             logger.info(f"[DRY-RUN] 将创建对话: {sqlite_conv.thread_id}")
     elif execute:
-        async with pg_manager.get_async_session_context() as session:
+        async with ob_manager.get_async_session_context() as session:
             for sqlite_conv in sqlite_convs:
                 existing = await session.execute(select(Conversation).where(Conversation.id == sqlite_conv.id))
                 if existing.scalar_one_or_none() is None:
@@ -371,7 +371,7 @@ async def migrate_messages(sqlite_reader: SQLiteReader, dry_run: bool, execute: 
         for sqlite_msg in sqlite_messages:
             logger.info(f"[DRY-RUN] 将创建消息: id={sqlite_msg.id}, conversation={sqlite_msg.conversation_id}")
     elif execute:
-        async with pg_manager.get_async_session_context() as session:
+        async with ob_manager.get_async_session_context() as session:
             for sqlite_msg in sqlite_messages:
                 existing = await session.execute(select(Message).where(Message.id == sqlite_msg.id))
                 if existing.scalar_one_or_none() is None:
@@ -402,7 +402,7 @@ async def migrate_tool_calls(sqlite_reader: SQLiteReader, dry_run: bool, execute
         for sqlite_call in sqlite_calls:
             logger.info(f"[DRY-RUN] 将创建工具调用: id={sqlite_call.id}, tool={sqlite_call.tool_name}")
     elif execute:
-        async with pg_manager.get_async_session_context() as session:
+        async with ob_manager.get_async_session_context() as session:
             for sqlite_call in sqlite_calls:
                 existing = await session.execute(select(ToolCall).where(ToolCall.id == sqlite_call.id))
                 if existing.scalar_one_or_none() is None:
@@ -433,7 +433,7 @@ async def migrate_conversation_stats(sqlite_reader: SQLiteReader, dry_run: bool,
         for sqlite_stat in sqlite_stats:
             logger.info(f"[DRY-RUN] 将创建对话统计: conversation_id={sqlite_stat.conversation_id}")
     elif execute:
-        async with pg_manager.get_async_session_context() as session:
+        async with ob_manager.get_async_session_context() as session:
             for sqlite_stat in sqlite_stats:
                 existing = await session.execute(
                     select(ConversationStats).where(ConversationStats.id == sqlite_stat.id)
@@ -465,7 +465,7 @@ async def migrate_operation_logs(sqlite_reader: SQLiteReader, dry_run: bool, exe
         for sqlite_log in sqlite_logs:
             logger.info(f"[DRY-RUN] 将创建操作日志: id={sqlite_log.id}, operation={sqlite_log.operation}")
     elif execute:
-        async with pg_manager.get_async_session_context() as session:
+        async with ob_manager.get_async_session_context() as session:
             for sqlite_log in sqlite_logs:
                 existing = await session.execute(select(OperationLog).where(OperationLog.id == sqlite_log.id))
                 if existing.scalar_one_or_none() is None:
@@ -493,7 +493,7 @@ async def migrate_message_feedbacks(sqlite_reader: SQLiteReader, dry_run: bool, 
         for sqlite_fb in sqlite_feedbacks:
             logger.info(f"[DRY-RUN] 将创建消息反馈: id={sqlite_fb.id}, rating={sqlite_fb.rating}")
     elif execute:
-        async with pg_manager.get_async_session_context() as session:
+        async with ob_manager.get_async_session_context() as session:
             for sqlite_fb in sqlite_feedbacks:
                 existing = await session.execute(select(MessageFeedback).where(MessageFeedback.id == sqlite_fb.id))
                 if existing.scalar_one_or_none() is None:
@@ -521,7 +521,7 @@ async def migrate_mcp_servers(sqlite_reader: SQLiteReader, dry_run: bool, execut
         for sqlite_server in sqlite_servers:
             logger.info(f"[DRY-RUN] 将创建 MCP 服务器: {sqlite_server.name}")
     elif execute:
-        async with pg_manager.get_async_session_context() as session:
+        async with ob_manager.get_async_session_context() as session:
             for sqlite_server in sqlite_servers:
                 existing = await session.execute(select(MCPServer).where(MCPServer.name == sqlite_server.name))
                 if existing.scalar_one_or_none() is None:
@@ -569,7 +569,7 @@ async def verify_migration(sqlite_reader: SQLiteReader) -> dict[str, dict]:
     for table_name, model, pk_column in tables:
         sqlite_count = sqlite_reader.count_table(table_name)
 
-        async with pg_manager.get_async_session_context() as session:
+        async with ob_manager.get_async_session_context() as session:
             from sqlalchemy import func
 
             pk_attr = getattr(model, pk_column)
@@ -603,7 +603,7 @@ async def rollback_migration() -> None:
     ]
 
     for model in tables_to_delete:
-        async with pg_manager.get_async_session_context() as session:
+        async with ob_manager.get_async_session_context() as session:
             result = await session.execute(select(model))
             records = result.scalars().all()
             for record in records:
@@ -645,12 +645,12 @@ async def main() -> None:
         args.dry_run = True
 
     # 初始化 PostgreSQL 管理器
-    pg_manager.initialize()
+    ob_manager.initialize()
     logger.info("PostgreSQL manager initialized")
 
     if args.init_tables:
         # 仅初始化表结构
-        await pg_manager.create_business_tables()
+        await ob_manager.create_business_tables()
         logger.info("业务表结构初始化完成")
         return
 
@@ -686,7 +686,7 @@ async def main() -> None:
     if args.migrate_all:
         # 检查是否需要初始化表结构
         logger.info("检查业务表结构...")
-        await pg_manager.create_business_tables()
+        await ob_manager.create_business_tables()
         logger.info("业务表结构就绪")
 
         results = await migrate_all(sqlite_reader, args.dry_run, args.execute)

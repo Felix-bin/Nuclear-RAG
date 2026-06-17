@@ -77,7 +77,7 @@ async def rollback_all() -> None:
 
 
 async def migrate(dry_run: bool, execute: bool, rollback: bool) -> None:
-    from src.storage.postgres.manager import pg_manager
+    from src.storage.postgres.manager import ob_manager
 
     base_dir = os.path.join(config.save_dir, "knowledge_base_data")
     global_meta_path = os.path.join(base_dir, "global_metadata.json")
@@ -92,8 +92,8 @@ async def migrate(dry_run: bool, execute: bool, rollback: bool) -> None:
         return
 
     # 初始化表结构
-    pg_manager.initialize()
-    await pg_manager.create_tables()
+    ob_manager.initialize()
+    await ob_manager.create_tables()
     logger.info("知识库表结构初始化完成")
 
     kb_repo = KnowledgeBaseRepository()

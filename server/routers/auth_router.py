@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.storage.postgres.manager import pg_manager
+from src.storage.postgres.manager import ob_manager
 from src.storage.postgres.models_business import User, Department
 from src.repositories.user_repository import UserRepository
 from src.repositories.department_repository import DepartmentRepository
@@ -210,7 +210,7 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
 # 路由：校验是否需要初始化管理员
 @auth.get("/check-first-run")
 async def check_first_run():
-    is_first_run = await pg_manager.async_check_first_run()
+    is_first_run = await ob_manager.async_check_first_run()
     return {"first_run": is_first_run}
 
 
@@ -218,7 +218,7 @@ async def check_first_run():
 @auth.post("/initialize", response_model=Token)
 async def initialize_admin(admin_data: InitializeAdmin, db: AsyncSession = Depends(get_db)):
     # 检查是否是首次运行
-    if not await pg_manager.async_check_first_run():
+    if not await ob_manager.async_check_first_run():
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="系统已经初始化，无法再次创建初始管理员",
