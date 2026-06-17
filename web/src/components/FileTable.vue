@@ -123,15 +123,6 @@
         >
           Auto
         </a-button> -->
-        <a-button
-          type="text"
-          @click="toggleRightPanel"
-          title="切换右侧面板"
-          class="panel-action-btn expand"
-          :class="{ expanded: props.rightPanelVisible }"
-        >
-          <template #icon><ChevronLast size="16" /></template>
-        </a-button>
       </div>
     </div>
 
@@ -436,7 +427,6 @@ import {
   Trash2,
   Download,
   RotateCw,
-  ChevronLast,
   Ellipsis,
   FolderPlus,
   CheckSquare,
@@ -493,14 +483,7 @@ const getStatusText = (status) => {
   return map[status] || status
 }
 
-const props = defineProps({
-  rightPanelVisible: {
-    type: Boolean,
-    default: true
-  }
-})
-
-const emit = defineEmits(['showAddFilesModal', 'toggleRightPanel'])
+const emit = defineEmits(['showAddFilesModal'])
 
 const files = computed(() => Object.values(store.database.files || {}))
 const isLightRAG = computed(() => store.database?.kb_type?.toLowerCase() === 'lightrag')
@@ -1005,11 +988,6 @@ const handleRefresh = () => {
 
 const toggleAutoRefresh = () => {
   store.toggleAutoRefresh()
-}
-
-const toggleRightPanel = () => {
-  console.log(props.rightPanelVisible)
-  emit('toggleRightPanel')
 }
 
 const onSelectChange = (keys, selectedRows) => {

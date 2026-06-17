@@ -1,21 +1,6 @@
 <template>
-  <div
-    class="chat-sidebar"
-    :class="{ 'sidebar-open': chatUIStore.isSidebarOpen, 'no-transition': isInitialRender }"
-  >
+  <div class="chat-sidebar sidebar-open" :class="{ 'no-transition': isInitialRender }">
     <div class="sidebar-content">
-      <div class="sidebar-header">
-        <div class="header-title">{{ branding.name }}</div>
-        <div class="header-actions">
-          <div
-            class="toggle-sidebar nav-btn"
-            v-if="chatUIStore.isSidebarOpen"
-            @click="toggleCollapse"
-          >
-            <PanelLeftClose size="20" color="var(--gray-800)" />
-          </div>
-        </div>
-      </div>
       <div class="conversation-list-top">
         <button
           type="text"
@@ -71,6 +56,9 @@
         </template>
         <div v-else class="empty-list">暂无对话历史</div>
       </div>
+      <div v-if="$slots.footer" class="sidebar-footer">
+        <slot name="footer" />
+      </div>
     </div>
   </div>
 </template>
@@ -79,7 +67,7 @@
 import { computed, h } from 'vue'
 import { DeleteOutlined, EditOutlined, MoreOutlined } from '@ant-design/icons-vue'
 import { message, Modal } from 'ant-design-vue'
-import { PanelLeftClose, MessageSquarePlus, LoaderCircle } from 'lucide-vue-next'
+import { MessageSquarePlus, LoaderCircle } from 'lucide-vue-next'
 import dayjs, { parseToShanghai } from '@/utils/time'
 import { useChatUIStore } from '@/stores/chatUI'
 import { useInfoStore } from '@/stores/info'
@@ -127,7 +115,6 @@ const emit = defineEmits([
   'select-chat',
   'delete-chat',
   'rename-chat',
-  'toggle-sidebar',
   'open-agent-modal'
 ])
 
@@ -232,10 +219,6 @@ const renameChat = async (chatId) => {
   } catch (error) {
     console.error('重命名对话失败:', error)
   }
-}
-
-const toggleCollapse = () => {
-  emit('toggle-sidebar')
 }
 </script>
 
@@ -471,22 +454,12 @@ const toggleCollapse = () => {
   background: var(--gray-400);
 }
 
-.toggle-sidebar.nav-btn {
-  cursor: pointer;
-  height: 2.5rem;
+.sidebar-footer {
+  flex-shrink: 0;
   display: flex;
-  justify-content: center;
   align-items: center;
-  border-radius: 8px;
-  // padding: 0.5rem;
-  transition: background-color 0.3s;
-
-  svg {
-    stroke: var(--gray-600);
-  }
-
-  &:hover svg {
-    stroke: var(--main-color);
-  }
+  gap: 6px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--gray-100);
 }
 </style>

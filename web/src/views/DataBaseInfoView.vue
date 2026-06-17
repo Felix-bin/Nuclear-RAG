@@ -18,108 +18,102 @@
       @success="onFileUploadSuccess"
     />
 
-    <div class="unified-layout">
-      <div class="left-panel" :style="{ width: leftPanelWidth + '%' }">
-        <KnowledgeBaseCard />
-        <!-- 待处理文件提示条 -->
-        <div class="info-panel" v-if="pendingParseCount > 0 || pendingIndexCount > 0">
-          <div class="banner-item" v-if="pendingParseCount > 0" @click="confirmBatchParse">
-            <FileText :size="14" />
-            <span>{{ pendingParseCount }} 个文件待解析，点击解析</span>
-          </div>
-          <div class="banner-item" v-if="pendingIndexCount > 0" @click="confirmBatchIndex">
-            <Database :size="14" />
-            <span>{{ pendingIndexCount }} 个文件待入库，点击入库</span>
-          </div>
-        </div>
-        <FileTable
-          :right-panel-visible="state.rightPanelVisible"
-          @show-add-files-modal="showAddFilesModal"
-          @toggle-right-panel="toggleRightPanel"
-        />
-      </div>
-
-      <div class="resize-handle" ref="resizeHandle"></div>
-
-      <div
-        class="right-panel"
-        :style="{
-          width: 100 - leftPanelWidth + '%',
-          display: store.state.rightPanelVisible ? 'flex' : 'none'
-        }"
+    <div class="kb-layout">
+      <a-tabs
+        v-model:activeKey="activeTab"
+        tab-position="left"
+        class="kb-tabs"
+        :tabBarStyle="{ width: '168px' }"
       >
-        <a-tabs
-          v-model:activeKey="activeTab"
-          class="knowledge-tabs"
-          :tabBarStyle="{ margin: 0, padding: '0 16px' }"
-        >
-          <template #rightExtra>
-            <a-tooltip title="检索配置" placement="bottom">
-              <a-button type="text" class="config-btn" @click="openSearchConfigModal">
-                <SettingOutlined />
-                <span class="config-text">检索配置</span>
-              </a-button>
-            </a-tooltip>
+        <template #rightExtra>
+          <a-tooltip title="检索配置" placement="right">
+            <a-button type="text" class="config-btn" @click="openSearchConfigModal">
+              <SettingOutlined />
+              <span class="config-text">检索配置</span>
+            </a-button>
+          </a-tooltip>
+        </template>
+
+        <!-- 知识文档 -->
+        <a-tab-pane key="docs">
+          <template #tab>
+            <span class="kb-tab"><FileText :size="16" /><span>知识文档</span></span>
           </template>
-          <a-tab-pane key="graph" tab="知识图谱" v-if="isGraphSupported">
-            <KnowledgeGraphSection
-              :visible="true"
-              :active="activeTab === 'graph'"
-              @toggle-visible="() => {}"
-            />
-          </a-tab-pane>
-          <a-tab-pane key="query" tab="检索测试">
-            <QuerySection ref="querySectionRef" :visible="true" @toggle-visible="() => {}" />
-          </a-tab-pane>
-          <a-tab-pane key="mindmap" tab="知识导图">
-            <MindMapSection v-if="databaseId" :database-id="databaseId" ref="mindmapSectionRef" />
-          </a-tab-pane>
-          <a-tab-pane key="evaluation" tab="RAG评估" :disabled="!isEvaluationSupported">
-            <template #tab>
-              <span :style="{ color: !isEvaluationSupported ? 'var(--gray-400)' : '' }">
-                RAG评估
-                <a-tooltip v-if="!isEvaluationSupported" title="仅支持 Milvus 类型的知识库">
-                  <Info :size="14" style="margin-left: 4px; vertical-align: middle" />
-                </a-tooltip>
-              </span>
-            </template>
-            <RAGEvaluationTab
-              v-if="databaseId && isEvaluationSupported"
-              :database-id="databaseId"
-              @switch-to-benchmarks="activeTab = 'benchmarks'"
-            />
-          </a-tab-pane>
-          <a-tab-pane key="benchmarks" tab="评估基准" :disabled="!isEvaluationSupported">
-            <template #tab>
-              <span :style="{ color: !isEvaluationSupported ? 'var(--gray-400)' : '' }">
-                评估基准
-                <a-tooltip v-if="!isEvaluationSupported" title="仅支持 Milvus 类型的知识库">
-                  <Info :size="14" style="margin-left: 4px; vertical-align: middle" />
-                </a-tooltip>
-              </span>
-            </template>
-            <div class="benchmark-management-container">
-              <div class="benchmark-content">
+          <div class="docs-pane">
+            <KnowledgeBaseCard />
+            <!-- 待处理文件提示条 -->
+            <div class="info-panel" v-if="pendingParseCount > 0 || pendingIndexCount > 0">
+              <div class="banner-item" v-if="pendingParseCount > 0" @click="confirmBatchParse">
+                <FileText :size="14" />
+                <span>{{ pendingParseCount }} 个文件待解析，点击解析</span>
+              </div>
+              <div class="banner-item" v-if="pendingIndexCount > 0" @click="confirmBatchIndex">
+                <Database :size="14" />
+                <span>{{ pendingIndexCount }} 个文件待入库，点击入库</span>
+              </div>
+            </div>
+            <FileTable class="docs-table" @show-add-files-modal="showAddFilesModal" />
+          </div>
+        </a-tab-pane>
+
+        <!-- 检索测试 -->
+        <a-tab-pane key="query">
+          <template #tab>
+            <span class="kb-tab"><Search :size="16" /><span>检索测试</span></span>
+          </template>
+          <QuerySection ref="querySectionRef" :visible="true" @toggle-visible="() => {}" />
+        </a-tab-pane>
+
+        <!-- 知识图谱（仅 LightRAG） -->
+        <a-tab-pane key="graph" v-if="isGraphSupported">
+          <template #tab>
+            <span class="kb-tab"><Network :size="16" /><span>知识图谱</span></span>
+          </template>
+          <KnowledgeGraphSection
+            :visible="true"
+            :active="activeTab === 'graph'"
+            @toggle-visible="() => {}"
+          />
+        </a-tab-pane>
+
+        <!-- 知识导图 -->
+        <a-tab-pane key="mindmap">
+          <template #tab>
+            <span class="kb-tab"><MapIcon :size="16" /><span>知识导图</span></span>
+          </template>
+          <MindMapSection v-if="databaseId" :database-id="databaseId" ref="mindmapSectionRef" />
+        </a-tab-pane>
+
+        <!-- RAG评估（仅 Milvus，含评估基准） -->
+        <a-tab-pane key="evaluation" v-if="isEvaluationSupported">
+          <template #tab>
+            <span class="kb-tab"><LineChart :size="16" /><span>RAG评估</span></span>
+          </template>
+          <div class="evaluation-pane">
+            <div class="eval-section eval-benchmarks">
+              <div class="eval-section-title">评估基准</div>
+              <div class="eval-section-body">
                 <EvaluationBenchmarks
-                  v-if="databaseId && isEvaluationSupported"
+                  v-if="databaseId"
                   :database-id="databaseId"
-                  @benchmark-selected="
-                    (benchmark) => {
-                      // 处理基准选择逻辑
-                      activeTab = 'evaluation'
-                    }
-                  "
-                  @refresh="
-                    () => {
-                      // 刷新逻辑
-                    }
-                  "
+                  @benchmark-selected="() => {}"
+                  @refresh="() => {}"
                 />
               </div>
             </div>
-          </a-tab-pane>
-        </a-tabs>
-      </div>
+            <div class="eval-section eval-result">
+              <div class="eval-section-title">评估结果</div>
+              <div class="eval-section-body">
+                <RAGEvaluationTab
+                  v-if="databaseId"
+                  :database-id="databaseId"
+                  @switch-to-benchmarks="() => {}"
+                />
+              </div>
+            </div>
+          </div>
+        </a-tab-pane>
+      </a-tabs>
     </div>
   </div>
 </template>
@@ -129,7 +123,7 @@ import { onMounted, reactive, ref, watch, onUnmounted, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useDatabaseStore } from '@/stores/database'
 import { useTaskerStore } from '@/stores/tasker'
-import { Info, FileText, Database } from 'lucide-vue-next'
+import { FileText, Database, Search, Network, Map as MapIcon, LineChart } from 'lucide-vue-next'
 import { SettingOutlined } from '@ant-design/icons-vue'
 import { Modal } from 'ant-design-vue'
 import KnowledgeBaseCard from '@/components/KnowledgeBaseCard.vue'
@@ -149,7 +143,6 @@ const taskerStore = useTaskerStore()
 
 const databaseId = computed(() => store.databaseId)
 const database = computed(() => store.database)
-const state = computed(() => store.state)
 // 计算属性：是否支持知识图谱
 const isGraphSupported = computed(() => {
   const kbType = database.value.kb_type?.toLowerCase()
@@ -231,8 +224,8 @@ const confirmBatchIndex = () => {
   })
 }
 
-// Tab 切换逻辑 - 智能默认
-const activeTab = ref('query')
+// Tab 切换逻辑 - 默认展示知识文档
+const activeTab = ref('docs')
 
 // 思维导图引用
 const mindmapSectionRef = ref(null)
@@ -250,54 +243,36 @@ const resetGraphStats = () => {
   }
 }
 
-// LightRAG 默认展示知识图谱
+// 切换知识库或类型变化时，回到知识文档；当前 tab 不再支持时也回退
 watch(
   () => [databaseId.value, isGraphSupported.value, isEvaluationSupported.value],
   ([newDbId, supported, evaluationSupported], oldValue = []) => {
-    const [oldDbId, previouslySupported, previouslyEvaluationSupported] = oldValue
+    const [oldDbId, previouslySupported] = oldValue
 
     if (!newDbId) {
       return
     }
 
-    if (newDbId && newDbId !== oldDbId) {
+    if (newDbId !== oldDbId) {
       resetGraphStats()
-    } else if (!supported && previouslySupported) {
-      resetGraphStats()
-    }
-
-    if (
-      supported &&
-      (newDbId !== oldDbId || previouslySupported === false || previouslySupported === undefined)
-    ) {
-      activeTab.value = 'graph'
+      activeTab.value = 'docs'
       return
     }
 
-    if (!supported && activeTab.value === 'graph') {
-      activeTab.value = 'query'
+    if (!supported && previouslySupported) {
+      resetGraphStats()
     }
 
-    // 如果知识库类型不支持评估功能且当前在评估相关 tab，切换到查询 tab
-    if (
-      !isEvaluationSupported.value &&
-      (activeTab.value === 'evaluation' || activeTab.value === 'benchmarks')
-    ) {
-      activeTab.value = 'query'
+    if (!supported && activeTab.value === 'graph') {
+      activeTab.value = 'docs'
+    }
+
+    if (!evaluationSupported && activeTab.value === 'evaluation') {
+      activeTab.value = 'docs'
     }
   },
   { immediate: true }
 )
-
-// 切换右侧面板显示/隐藏
-const toggleRightPanel = () => {
-  store.state.rightPanelVisible = !store.state.rightPanelVisible
-}
-
-// 拖拽调整大小（仅水平方向）
-const leftPanelWidth = ref(50)
-const isDragging = ref(false)
-const resizeHandle = ref(null)
 
 // 检索配置弹窗
 const searchConfigModalVisible = ref(false)
@@ -474,50 +449,12 @@ onMounted(() => {
   resetFileSelectionState()
   store.getDatabaseInfo()
   store.startAutoRefresh()
-
-  // 添加拖拽事件监听（仅水平方向）
-  if (resizeHandle.value) {
-    resizeHandle.value.addEventListener('mousedown', handleMouseDown)
-  }
 })
 
 // 组件卸载时停止示例轮播
 onUnmounted(() => {
   store.stopAutoRefresh()
-  if (resizeHandle.value) {
-    resizeHandle.value.removeEventListener('mousedown', handleMouseDown)
-  }
-  document.removeEventListener('mousemove', handleMouseMove)
-  document.removeEventListener('mouseup', handleMouseUp)
 })
-
-// 拖拽调整大小功能
-const handleMouseDown = () => {
-  isDragging.value = true
-  document.addEventListener('mousemove', handleMouseMove)
-  document.addEventListener('mouseup', handleMouseUp)
-  document.body.style.cursor = 'col-resize'
-  document.body.style.userSelect = 'none'
-}
-
-const handleMouseMove = (e) => {
-  if (!isDragging.value) return
-
-  const container = document.querySelector('.unified-layout')
-  if (!container) return
-
-  const containerRect = container.getBoundingClientRect()
-  const newWidth = ((e.clientX - containerRect.left) / containerRect.width) * 100
-  leftPanelWidth.value = Math.max(20, Math.min(80, newWidth))
-}
-
-const handleMouseUp = () => {
-  isDragging.value = false
-  document.removeEventListener('mousemove', handleMouseMove)
-  document.removeEventListener('mouseup', handleMouseUp)
-  document.body.style.cursor = ''
-  document.body.style.userSelect = ''
-}
 </script>
 
 <style lang="less" scoped>
@@ -551,97 +488,19 @@ const handleMouseUp = () => {
   }
 }
 
-/* Unified Layout Styles */
-.unified-layout {
-  display: flex;
+/* 左侧 Tab 布局 */
+.kb-layout {
   height: 100vh;
   background-color: var(--gray-0);
-  gap: 0;
-
-  .left-panel,
-  .right-panel {
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    padding: 8px;
-  }
-
-  .left-panel {
-    display: flex;
-    flex-shrink: 0;
-    flex-grow: 1;
-    padding-right: 0;
-    flex-direction: column;
-    // max-height: calc(100% - 16px);
-  }
-
-  .info-panel {
-    background: var(--gray-10);
-    border-radius: 12px;
-    border: 1px solid var(--gray-200);
-    display: flex;
-    gap: 12px;
-    padding: 8px 12px;
-    margin-bottom: 8px;
-    flex-shrink: 0;
-
-    .banner-item {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      padding: 6px 12px;
-      background: var(--color-info-50);
-      border-left: 3px solid var(--color-info-500);
-      border-radius: 2px;
-      font-size: 13px;
-      color: var(--color-info-700);
-      cursor: pointer;
-      transition: all 0.2s;
-
-      &:hover {
-        background: var(--color-info-100);
-      }
-
-      svg {
-        color: var(--color-info-500);
-      }
-    }
-  }
-
-  .right-panel {
-    flex-grow: 1;
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
-    padding-left: 0;
-  }
-
-  .resize-handle {
-    width: 4px;
-    cursor: col-resize;
-    background-color: var(--gray-200);
-    position: relative;
-    z-index: 10;
-    flex-shrink: 0;
-    height: 30px;
-    top: 40%;
-    margin: 0 2px;
-    border-radius: 4px;
-  }
+  overflow: hidden;
 }
 
-/* Tab 样式 */
-.knowledge-tabs {
+.kb-tabs {
   height: 100%;
-  display: flex;
-  flex-direction: column;
-  border: 1px solid var(--gray-200);
-  border-radius: 12px;
-  background: var(--gray-10);
   overflow: hidden;
 
-  :deep(.ant-tabs-content) {
-    flex: 1;
+  :deep(.ant-tabs-content),
+  :deep(.ant-tabs-content-holder) {
     height: 100%;
     overflow: hidden;
   }
@@ -651,29 +510,176 @@ const handleMouseUp = () => {
     overflow: hidden;
   }
 
+  /* 左侧导航栏 */
   :deep(.ant-tabs-nav) {
-    margin-bottom: 0;
-    // background-color: var(--gray-0);
+    margin: 0;
+    padding: 10px 8px;
+    background: var(--gray-25);
+    border-right: 1px solid var(--gray-150);
+  }
+
+  :deep(.ant-tabs-nav-list) {
+    gap: 2px;
+  }
+
+  :deep(.ant-tabs-tab) {
+    margin: 0 !important;
+    padding: 9px 12px;
+    border-radius: 8px;
+    transition:
+      background 0.15s,
+      color 0.15s;
+
+    + .ant-tabs-tab {
+      margin: 0 !important;
+    }
+
+    .kb-tab {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 14px;
+      color: var(--gray-700);
+      line-height: 1;
+
+      svg {
+        color: var(--gray-500);
+        flex-shrink: 0;
+      }
+    }
+
+    &:hover .kb-tab,
+    &:hover .kb-tab svg {
+      color: var(--gray-900);
+    }
+  }
+
+  :deep(.ant-tabs-tab-active) {
+    background: var(--main-50);
+
+    .kb-tab,
+    .kb-tab svg {
+      color: var(--main-color);
+      font-weight: 500;
+    }
+  }
+
+  /* 隐藏默认的滑动指示条，用背景块表达选中态 */
+  :deep(.ant-tabs-ink-bar) {
+    display: none;
+  }
+
+  /* 检索配置：固定在导航栏底部 */
+  :deep(.ant-tabs-nav-operations) {
+    display: none;
   }
 
   :deep(.ant-tabs-extra-content) {
+    margin-top: auto;
+    padding-top: 8px;
+    border-top: 1px solid var(--gray-150);
+  }
+}
+
+/* 知识文档页 */
+.docs-pane {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: 8px;
+  overflow: hidden;
+
+  .docs-table {
+    flex: 1;
+    min-height: 0;
+  }
+}
+
+.info-panel {
+  background: var(--gray-10);
+  border-radius: 12px;
+  border: 1px solid var(--gray-200);
+  display: flex;
+  gap: 12px;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+  flex-shrink: 0;
+
+  .banner-item {
     display: flex;
     align-items: center;
-    height: 100%;
+    gap: 6px;
+    padding: 6px 12px;
+    background: var(--color-info-50);
+    border-left: 3px solid var(--color-info-500);
+    border-radius: 2px;
+    font-size: 13px;
+    color: var(--color-info-700);
+    cursor: pointer;
+    transition: all 0.2s;
+
+    &:hover {
+      background: var(--color-info-100);
+    }
+
+    svg {
+      color: var(--color-info-500);
+    }
+  }
+}
+
+/* RAG评估页：上下分区同屏 */
+.evaluation-pane {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+
+  .eval-section {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .eval-benchmarks {
+    flex: 0 0 40%;
+    border-bottom: 1px solid var(--gray-200);
+  }
+
+  .eval-result {
+    flex: 1;
+  }
+
+  .eval-section-title {
+    flex-shrink: 0;
+    padding: 10px 16px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--gray-700);
+    background: var(--gray-25);
+    border-bottom: 1px solid var(--gray-150);
+  }
+
+  .eval-section-body {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
   }
 }
 
 .config-btn {
+  width: 100%;
   color: var(--gray-600);
-  font-size: 16px;
+  font-size: 14px;
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 4px;
-  padding: 4px 8px;
-  height: 32px;
-  border-radius: 6px;
-  transition: all 0.2s;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 9px 12px;
+  height: auto;
+  border-radius: 8px;
+  transition: all 0.15s;
 
   &:hover {
     color: var(--main-color);
@@ -682,7 +688,6 @@ const handleMouseUp = () => {
 
   .config-text {
     font-size: 14px;
-    margin-left: 4px;
   }
 }
 
@@ -783,20 +788,5 @@ const handleMouseUp = () => {
     flex: 1;
     overflow: hidden;
   }
-}
-
-// 基准管理样式
-.benchmark-management-container {
-  height: 100%;
-  background: var(--gray-0);
-  display: flex;
-  flex-direction: column;
-}
-
-.benchmark-content {
-  flex: 1;
-  overflow: hidden;
-  min-height: 0;
-  padding: 12px 16px;
 }
 </style>

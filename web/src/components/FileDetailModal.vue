@@ -17,17 +17,10 @@
         </div>
 
         <div class="header-controls">
-          <!-- 字符数/片段数显示在 segment 左边 -->
+          <!-- 字符数与片段数 -->
           <span class="view-info">
-            {{
-              viewMode === 'chunks' ? chunkCount + ' 个片段' : formatTextLength(charCount) + ' 字符'
-            }}
+            {{ formatTextLength(charCount) }} 字符 · {{ chunkCount }} 个片段
           </span>
-
-          <!-- 视图模式切换 -->
-          <div class="view-controls" v-if="file && hasChunks">
-            <a-segmented v-model:value="viewMode" :options="viewModeOptions" />
-          </div>
 
           <!-- 下载按钮下拉菜单 -->
           <a-dropdown trigger="click" v-if="file">
@@ -64,34 +57,40 @@
       <a-spin tip="正在加载文档内容..." />
     </div>
     <div v-else-if="file && hasContent" class="file-detail-content">
-      <!-- Markdown 模式 -->
-      <div v-if="viewMode === 'markdown'" class="content-panel">
-        <MdPreview
-          v-if="mergedContent"
-          :modelValue="mergedContent"
-          :theme="theme"
-          previewTheme="github"
-          class="markdown-content"
-        />
-        <div v-else class="empty-content">
-          <p>暂无文件内容</p>
+      <!-- 左侧：解析出的文档内容 -->
+      <div class="doc-pane">
+        <div class="pane-title">文档内容</div>
+        <div class="pane-body">
+          <MdPreview
+            v-if="mergedContent"
+            :modelValue="mergedContent"
+            :theme="theme"
+            previewTheme="github"
+            class="markdown-content"
+          />
+          <div v-else class="empty-content">
+            <p>暂无文件内容</p>
+          </div>
         </div>
       </div>
 
-      <!-- Chunks 模式：使用 Grid 布局 -->
-      <div v-else-if="viewMode === 'chunks'" class="chunks-panel">
-        <div class="chunk-grid">
-          <div v-for="chunk in mappedChunks" :key="chunk.id" class="chunk-card">
-            <div class="chunk-card-header">
-              <span class="chunk-order">#{{ chunk.chunk_order_index }}</span>
-            </div>
-            <div class="chunk-card-content">
-              {{ chunk.content.replace(/\n+/g, ' ') }}
+      <!-- 右侧：Chunk 结果 -->
+      <div class="chunk-pane">
+        <div class="pane-title">分块结果（{{ chunkCount }}）</div>
+        <div class="pane-body">
+          <div v-if="mappedChunks.length > 0" class="chunk-list">
+            <div v-for="chunk in mappedChunks" :key="chunk.id" class="chunk-card">
+              <div class="chunk-card-header">
+                <span class="chunk-order">#{{ chunk.chunk_order_index }}</span>
+              </div>
+              <div class="chunk-card-content">
+                {{ chunk.content.replace(/\n+/g, ' ') }}
+              </div>
             </div>
           </div>
-        </div>
-        <div v-if="mappedChunks.length === 0" class="empty-content">
-          <p>暂无分块信息</p>
+          <div v-else class="empty-content">
+            <p>暂无分块信息</p>
+          </div>
         </div>
       </div>
     </div>
@@ -103,7 +102,7 @@
 </template>
 
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, ref } from 'vue'
 import { useDatabaseStore } from '@/stores/database'
 import { useThemeStore } from '@/stores/theme'
 import { message } from 'ant-design-vue'
@@ -135,30 +134,10 @@ const downloadingMarkdown = ref(false)
 // 主题设置
 const theme = computed(() => (themeStore.isDark ? 'dark' : 'light'))
 
-// 视图模式
-const viewMode = ref('markdown')
 const hasIndexed = computed(() => ['done', 'indexed'].includes(file.value?.status))
 const hasContent = computed(
   () => (file.value?.lines && file.value?.lines.length > 0) || file.value?.content
 )
-// 是否有实际的分块数据
-const hasChunks = computed(() => mappedChunks.value && mappedChunks.value.length > 0)
-
-const viewModeOptions = computed(() => {
-  const options = [{ label: 'Markdown', value: 'markdown' }]
-  // 只有当有实际的分块数据时才显示 Chunks 选项
-  if (hasChunks.value) {
-    options.push({ label: 'Chunks', value: 'chunks' })
-  }
-  return options
-})
-
-// 监听文件变化，如果没有 chunks 则重置为 markdown
-watch(file, (newFile) => {
-  if (newFile && !hasChunks.value) {
-    viewMode.value = 'markdown'
-  }
-})
 
 // 统计信息
 const mergeResult = computed(() => mergeChunks(file.value?.lines || []))
@@ -181,7 +160,6 @@ function formatTextLength(length) {
 const afterOpenChange = (open) => {
   if (!open) {
     store.selectedFile = null
-    viewMode.value = 'markdown'
   }
 }
 
@@ -305,18 +283,43 @@ const handleDownloadMarkdown = () => {
 <style scoped>
 .file-detail-content {
   height: 100%;
-  overflow-y: auto;
   display: flex;
-  flex-direction: column;
+  overflow: hidden;
 }
 
-.content-panel,
-.chunks-panel {
-  flex: 1;
-  overflow-y: auto;
-  padding: 16px 0;
-  background: var(--gray-0);
+/* 左右分栏 */
+.doc-pane,
+.chunk-pane {
+  display: flex;
+  flex-direction: column;
   min-height: 0;
+  min-width: 0;
+}
+
+.doc-pane {
+  flex: 1 1 60%;
+  border-right: 1px solid var(--gray-200);
+}
+
+.chunk-pane {
+  flex: 1 1 40%;
+  background: var(--gray-25);
+}
+
+.pane-title {
+  flex-shrink: 0;
+  padding: 10px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--gray-700);
+  border-bottom: 1px solid var(--gray-150);
+}
+
+.pane-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px;
 }
 
 .markdown-content {
@@ -338,9 +341,9 @@ const handleDownloadMarkdown = () => {
 }
 
 /* Chunks 面板样式 */
-.chunk-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+.chunk-list {
+  display: flex;
+  flex-direction: column;
   gap: 12px;
 }
 
@@ -372,12 +375,9 @@ const handleDownloadMarkdown = () => {
 .chunk-card-content {
   font-size: 12px;
   color: var(--gray-600);
-  line-height: 1.5;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: -webkit-box;
-  -webkit-line-clamp: 4;
-  -webkit-box-orient: vertical;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 </style>
 
@@ -463,13 +463,6 @@ const handleDownloadMarkdown = () => {
   }
 }
 
-/* 视图切换控件 */
-.view-controls {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
 .view-info {
   font-size: 12px;
   color: var(--gray-500);
@@ -493,7 +486,7 @@ const handleDownloadMarkdown = () => {
   }
 }
 /* MdPreview 覆盖样式 - 非 scoped */
-.content-panel {
+.doc-pane {
   .md-editor-preview-wrapper {
     padding: 0;
   }

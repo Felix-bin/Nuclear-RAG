@@ -32,8 +32,7 @@ export const useDatabaseStore = defineStore('database', () => {
     batchDeleting: false,
     chunkLoading: false,
     autoRefresh: false,
-    queryParamsLoading: false,
-    rightPanelVisible: true
+    queryParamsLoading: false
   })
 
   let refreshInterval = null

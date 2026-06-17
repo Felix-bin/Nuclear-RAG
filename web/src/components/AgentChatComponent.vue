@@ -3,7 +3,6 @@
     <ChatSidebarComponent
       :current-chat-id="currentChatId"
       :chats-list="chatsList"
-      :is-sidebar-open="chatUIStore.isSidebarOpen"
       :is-initial-render="localUIState.isInitialRender"
       :single-mode="props.singleMode"
       :agents="agents"
@@ -13,39 +12,16 @@
       @select-chat="selectChat"
       @delete-chat="deleteChat"
       @rename-chat="renameChat"
-      @toggle-sidebar="toggleSidebar"
-      :class="{
-        'sidebar-open': chatUIStore.isSidebarOpen,
-        'no-transition': localUIState.isInitialRender
-      }"
-    />
+      :class="{ 'no-transition': localUIState.isInitialRender }"
+    >
+      <template v-if="$slots['sidebar-footer']" #footer>
+        <slot name="sidebar-footer"></slot>
+      </template>
+    </ChatSidebarComponent>
     <div class="chat">
-      <div class="chat-header">
+      <div class="chat-header" v-if="$slots['header-left'] || $slots['header-right']">
         <div class="header__left">
           <slot name="header-left" class="nav-btn"></slot>
-          <div
-            type="button"
-            class="agent-nav-btn"
-            v-if="!chatUIStore.isSidebarOpen"
-            @click="toggleSidebar"
-          >
-            <PanelLeftOpen class="nav-btn-icon" size="18" />
-          </div>
-          <div
-            type="button"
-            class="agent-nav-btn"
-            v-if="!chatUIStore.isSidebarOpen"
-            :class="{ 'is-disabled': chatUIStore.creatingNewChat }"
-            @click="createNewChat"
-          >
-            <LoaderCircle
-              v-if="chatUIStore.creatingNewChat"
-              class="nav-btn-icon loading-icon"
-              size="18"
-            />
-            <MessageCirclePlus v-else class="nav-btn-icon" size="16" />
-            <span class="text">新对话</span>
-          </div>
         </div>
         <div class="header__right">
           <!-- AgentState 显示按钮已移动到输入框底部 -->
@@ -193,7 +169,6 @@ import AgentInputArea from '@/components/AgentInputArea.vue'
 import AgentMessageComponent from '@/components/AgentMessageComponent.vue'
 import ChatSidebarComponent from '@/components/ChatSidebarComponent.vue'
 import RefsComponent from '@/components/RefsComponent.vue'
-import { PanelLeftOpen, MessageCirclePlus, LoaderCircle } from 'lucide-vue-next'
 import { handleChatError, handleValidationError } from '@/utils/errorHandler'
 import { ScrollController } from '@/utils/scrollController'
 import { AgentValidator } from '@/utils/agentValidator'
@@ -1084,10 +1059,6 @@ const buildExportPayload = () => {
 defineExpose({
   getExportPayload: buildExportPayload
 })
-
-const toggleSidebar = () => {
-  chatUIStore.toggleSidebar()
-}
 
 const handleAgentStateRefresh = async (threadId = null) => {
   if (!currentAgentId.value) return

@@ -21,7 +21,7 @@ const { activeCount: activeCountRef, isDrawerOpen } = storeToRefs(taskerStore)
 
 const layoutSettings = reactive({
   showDebug: false,
-  useTopBar: false // 是否使用顶栏
+  useTopBar: true // 是否使用顶栏
 })
 
 // Add state for debug modal
@@ -64,6 +64,9 @@ console.log(route)
 
 const activeTaskCount = computed(() => activeCountRef.value || 0)
 
+// 顶栏模式下 tooltip 朝下，侧边栏模式下朝右
+const tooltipPlacement = computed(() => (layoutSettings.useTopBar ? 'bottom' : 'right'))
+
 // 下面是导航菜单部分，添加智能体项
 const mainList = [
   {
@@ -98,6 +101,9 @@ provide('settingsModal', {
       <div class="logo circle">
         <router-link to="/">
           <img :src="infoStore.organization.avatar" />
+          <span v-if="layoutSettings.useTopBar && infoStore.organization.name" class="brand-name">
+            {{ infoStore.organization.name }}
+          </span>
         </router-link>
       </div>
       <div class="nav">
@@ -110,22 +116,23 @@ provide('settingsModal', {
           class="nav-item"
           active-class="active"
         >
-          <a-tooltip placement="right">
-            <template #title>{{ item.name }}</template>
+          <a-tooltip :placement="tooltipPlacement">
+            <template #title>{{ layoutSettings.useTopBar ? '' : item.name }}</template>
             <component
               class="icon"
               :is="route.path.startsWith(item.path) ? item.activeIcon : item.icon"
               size="22"
             />
           </a-tooltip>
+          <span class="text">{{ item.name }}</span>
         </RouterLink>
         <div
           class="nav-item task-center"
           :class="{ active: isDrawerOpen }"
           @click="taskerStore.openDrawer()"
         >
-          <a-tooltip placement="right">
-            <template #title>任务中心</template>
+          <a-tooltip :placement="tooltipPlacement">
+            <template #title>{{ layoutSettings.useTopBar ? '' : '任务中心' }}</template>
             <a-badge
               :count="activeTaskCount"
               :overflow-count="99"
@@ -135,6 +142,7 @@ provide('settingsModal', {
               <CircleCheck class="icon" size="22" />
             </a-badge>
           </a-tooltip>
+          <span class="text">任务中心</span>
         </div>
       </div>
       <div class="fill"></div>
@@ -263,6 +271,11 @@ div.header,
       outline: none;
     }
 
+    // 侧边栏模式下隐藏文字标签，仅图标 + tooltip
+    .text {
+      display: none;
+    }
+
     &.active {
       background-color: var(--gray-100);
       font-weight: bold;
@@ -318,26 +331,28 @@ div.header,
 }
 
 .header.top-bar {
+  position: relative;
   flex-direction: row;
   flex: 0 0 50px;
   width: 100%;
   height: 50px;
   border-right: none;
-  border-bottom: 1px solid var(--main-40);
-  background-color: var(--main-20);
-  padding: 0 20px;
-  gap: 24px;
+  border-bottom: 1px solid var(--gray-150);
+  background-color: var(--main-0);
+  padding: 0 16px;
+  gap: 8px;
 
   .logo {
     width: fit-content;
     height: 28px;
-    margin-right: 16px;
+    margin: 0 12px 0 0;
     display: flex;
     align-items: center;
 
     a {
       display: flex;
       align-items: center;
+      gap: 8px;
       text-decoration: none;
       color: inherit;
     }
@@ -345,25 +360,39 @@ div.header,
     img {
       width: 28px;
       height: 28px;
-      margin-right: 8px;
+      margin: 0;
+      border-radius: 6px;
+    }
+
+    .brand-name {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--gray-900);
+      white-space: nowrap;
     }
   }
 
   .nav {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
     flex-direction: row;
     height: auto;
-    gap: 20px;
+    gap: 4px;
   }
 
   .nav-item {
     flex-direction: row;
     width: auto;
-    padding: 4px 16px;
+    height: 36px;
+    padding: 0 14px;
     margin: 0;
+    border-radius: 8px;
+    gap: 8px;
 
     .icon {
-      margin-right: 8px;
-      font-size: 15px; // 减小图标大小
+      width: 18px;
+      height: 18px;
       border: none;
       outline: none;
 
@@ -375,8 +404,21 @@ div.header,
     }
 
     .text {
-      margin-top: 0;
-      font-size: 15px;
+      display: inline-flex;
+      align-items: center;
+      margin: 0;
+      font-size: 14px;
+      line-height: 1;
+      white-space: nowrap;
+    }
+
+    &.user-info {
+      margin: 0;
+      padding: 0;
+    }
+
+    &.task-center .task-center-badge {
+      width: auto;
     }
 
     &.theme-toggle-nav {

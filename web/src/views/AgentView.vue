@@ -20,14 +20,14 @@
           @open-config="toggleConf"
           @close-config-sidebar="() => (chatUIStore.isConfigSidebarOpen = false)"
         >
-          <template #header-right>
-            <a-dropdown v-if="selectedAgentId" :trigger="['click']">
-              <div type="button" class="agent-nav-btn">
+          <template #sidebar-footer>
+            <a-dropdown v-if="selectedAgentId" :trigger="['click']" placement="topLeft">
+              <div type="button" class="agent-nav-btn footer-config-btn">
                 <Settings2 size="18" class="nav-btn-icon" />
-                <span class="text hide-text">
+                <span class="text">
                   {{ selectedConfigSummary?.name || '配置' }}
                 </span>
-                <ChevronDown size="16" class="nav-btn-icon" />
+                <ChevronDown size="16" class="nav-btn-icon chevron" />
               </div>
               <template #overlay>
                 <a-menu
@@ -104,7 +104,7 @@
             class="more-popup-menu"
             :style="{
               left: chatUIStore.moreMenuPosition.x + 'px',
-              top: chatUIStore.moreMenuPosition.y + 'px'
+              bottom: chatUIStore.moreMenuPosition.y + 'px'
             }"
           >
             <div class="menu-item" @click="handleShareChat">
@@ -221,9 +221,9 @@ const toggleMoreMenu = (event) => {
   chatUIStore.moreMenuOpen = !chatUIStore.moreMenuOpen
 
   if (chatUIStore.moreMenuOpen) {
-    // 只在打开时计算位置
+    // 只在打开时计算位置：按钮位于侧边栏底部，菜单向上弹出
     const rect = event.currentTarget.getBoundingClientRect()
-    chatUIStore.openMoreMenu(rect.right - 130, rect.bottom + 8)
+    chatUIStore.openMoreMenu(rect.right - 130, window.innerHeight - rect.top + 8)
   }
 }
 
@@ -299,7 +299,7 @@ const handlePreview = () => {
   display: flex;
   flex-direction: column;
   width: 100%;
-  height: 100vh;
+  height: 100%;
   overflow: hidden;
 }
 
@@ -351,6 +351,25 @@ const handlePreview = () => {
 .content {
   flex: 1;
   overflow: hidden;
+}
+
+// 历史对话栏底部的配置 / 更多按钮
+.footer-config-btn {
+  flex: 1;
+  justify-content: flex-start !important;
+  min-width: 0;
+
+  .text {
+    flex: 1;
+    text-align: left;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .chevron {
+    flex-shrink: 0;
+  }
 }
 
 // 配置弹窗内容样式
